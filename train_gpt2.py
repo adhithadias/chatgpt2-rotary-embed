@@ -4,8 +4,87 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from typing import Tuple
 
 # -----------------------------------------------------------------------------
+
+class RotaryEmbedding(nn.Module):
+    """Rotary position encoding module"""
+
+    def __init__(self, d_model):
+        super().__init__()
+        self.d_model = d_model
+        self.inv_freq = 1. / (10000 ** (torch.arange(0, d_model, 2).float() / d_model))
+
+    def forward(self, x):
+        t = torch.arange(x.shape[1], device=x.device).type_as(self.inv_freq)
+        freqs = torch.einsum('i,j->ij', t, self.inv_freq)
+        emb = torch.cat((torch.sin(freqs), torch.cos(freqs)), dim=-1)
+        return emb[None, :, :]
+    
+def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
+    """
+    Reshape frequency tensor for broadcasting it with another tensor.
+
+    This function reshapes the frequency tensor to have the same shape as the target tensor 'x'
+    for the purpose of broadcasting the frequency tensor during element-wise operations.
+
+    Args:
+        freqs_cis (torch.Tensor): Frequency tensor to be reshaped.
+        x (torch.Tensor): Target tensor for broadcasting compatibility.
+
+    Returns:
+        torch.Tensor: Reshaped frequency tensor.
+
+    Raises:
+        AssertionError: If the frequency tensor doesn't match the expected shape.
+        AssertionError: If the target tensor 'x' doesn't have the expected number of dimensions.
+    """
+    ndim = x.ndim
+    # print('ndim', ndim)
+    # print(x.shape)
+    # print(freqs_cis.shape)
+    assert 0 <= 1 < ndim
+    assert freqs_cis.shape == (x.shape[1], x.shape[-1])
+    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
+    return freqs_cis.view(*shape)    
+
+def apply_rotary_emb(
+    xq: torch.Tensor,
+    xk: torch.Tensor,
+    freqs_cis: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply rotary embeddings to input tensors using the given frequency tensor.
+
+    This function applies rotary embeddings to the given query 'xq' and key 'xk' tensors using the provided
+    frequency tensor 'freqs_cis'. The input tensors are reshaped as complex numbers, and the frequency tensor
+    is reshaped for broadcasting compatibility. The resulting tensors contain rotary embeddings and are
+    returned as real tensors.
+
+    Args:
+        xq (torch.Tensor): Query tensor to apply rotary embeddings.
+        xk (torch.Tensor): Key tensor to apply rotary embeddings.
+        freqs_cis (torch.Tensor): Precomputed frequency tensor for complex exponentials.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
+
+        
+
+    """
+    # print('xq', xq.shape)
+    # print('xk', xk.shape)
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    # print('xq_', xq_.shape)
+    # print('xk_', xk_.shape)
+    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
+    # print('freqs_cis device', freqs_cis.device)
+    # print('xq_ device', xq_.device)
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+    return xq_out.type_as(xq), xk_out.type_as(xk)
 
 class CausalSelfAttention(nn.Module):
 
@@ -23,17 +102,27 @@ class CausalSelfAttention(nn.Module):
         # not really a 'bias', more of a mask, but following the OpenAI/HF naming though
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
+        self.rotary = RotaryEmbedding(config.n_embd)
 
-    def forward(self, x):
+    def forward(self, x, freqs_cis):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
         # e.g. in GPT-2 (124M), n_head=12, hs=64, so nh*hs=C=768 channels in the Transformer
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, T, self.n_head, C // self.n_head)
+        q = q.view(B, T, self.n_head, C // self.n_head)
+        
+        # apply rotary embedding to the keys
+        q, k = apply_rotary_emb(q, k, freqs_cis)
+        
+        k = k.transpose(1, 2) # (B, nh, T, hs)
+        q = q.transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        
+        # apply rotary embedding to the queries
+        
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # flash attention
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
         # output projection
@@ -64,10 +153,35 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, freqs_cis):
+        x = x + self.attn(self.ln_1(x), freqs_cis)
         x = x + self.mlp(self.ln_2(x))
         return x
+    
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
+) -> torch.Tensor:
+    """
+    Precompute the frequency tensor for complex exponentials (cis) with given dimensions.
+
+    This function calculates a frequency tensor with complex exponentials using the given dimension 'dim'
+    and the end index 'end'. The 'theta' parameter scales the frequencies.
+    The returned tensor contains complex values in complex64 data type.
+
+    Args:
+        dim (int): Dimension of the frequency tensor.
+        end (int): End index for precomputing frequencies.
+        theta (float, optional): Scaling factor for frequency computation. Defaults to 10000.0.
+
+    Returns:
+        torch.Tensor: Precomputed frequency tensor with complex exponentials.
+
+    """
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device)  # type: ignore
+    freqs = torch.outer(t, freqs).float()  # type: ignore
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+    freqs_cis = freqs_cis.to(device=device)
+    return freqs_cis
 
 @dataclass
 class GPTConfig:
@@ -79,13 +193,14 @@ class GPTConfig:
 
 class GPT(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, device):
         super().__init__()
         self.config = config
+        self.device = device
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
+            # wpe = nn.Embedding(config.block_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd),
         ))
@@ -96,6 +211,10 @@ class GPT(nn.Module):
 
         # init params
         self.apply(self._init_weights)
+        
+        self.freqs_cis = precompute_freqs_cis(
+            config.n_embd // config.n_head, config.block_size
+        )
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -111,15 +230,17 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None):
         # idx is of shape (B, T)
         B, T = idx.size()
+        self.freqs_cis = self.freqs_cis.to(device=idx.device)
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
         # forward the token and posisition embeddings
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
+        # pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
-        x = tok_emb + pos_emb
+        x = tok_emb
+        # x = tok_emb + pos_emb
         # forward the blocks of the transformer
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, freqs_cis = self.freqs_cis)
         # forward the final layernorm and the classifier
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
@@ -248,7 +369,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 total_batch_size = 524288 # 2**19, ~0.5M, in number of tokens
-B = 16 # micro batch size
+B = 4 # micro batch size
 T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
@@ -260,7 +381,7 @@ train_loader = DataLoaderLite(B=B, T=T)
 torch.set_float32_matmul_precision('high')
 
 # get logits
-model = GPT(GPTConfig(vocab_size=50304))
+model = GPT(GPTConfig(vocab_size=50304), device=device)
 model.to(device)
 model = torch.compile(model)
 
