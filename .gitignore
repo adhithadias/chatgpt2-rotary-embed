@@ -1,0 +1,7 @@
+dummy
+**.egg-info
+**build**
+.venv
+__pycache__
+temp**
+**.so
