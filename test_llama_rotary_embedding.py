@@ -70,18 +70,18 @@ def apply_rotary_emb(
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
     
-    print(xq_)
+    # print(xq_)
     # print('xq_', xq_.shape)
-    print('xk_.shape:', xk_.shape)
+    # print('xk_.shape:', xk_.shape)
     freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
-    print('freqs_cis.shape:', freqs_cis.shape)
-    print('//////////')
-    print(freqs_cis)
+    # print('freqs_cis.shape:', freqs_cis.shape)
+    # print('//////////')
+    # print(freqs_cis)
     # print('freqs_cis device', freqs_cis.device)
     # print('xq_ device', xq_.device)
     xq_out = xq_ * freqs_cis
-    print('==========')
-    print(xq_out)
+    # print('==========')
+    # print(xq_out)
     xq_out = torch.view_as_real(xq_out).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
@@ -104,17 +104,17 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
         torch.Tensor: Precomputed frequency tensor with complex exponentials.
 
     """
-    print(dim)
+    # print(dim)
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    print(freqs.shape)
-    print('freqs:', freqs)
+    # print(freqs.shape)
+    # print('freqs:', freqs)
     t = torch.arange(end, device=freqs.device)  # type: ignore
-    print('seq_idx.shape:', t.shape)
-    print(t)
+    # print('seq_idx.shape:', t.shape)
+    # print(t)
     freqs = torch.outer(t, freqs) # type: ignore
     # convert datatype to bfloat16
     freqs = freqs.to(dtype=torch.float32)
-    print('freqs.shape:', freqs.shape)
+    # print('freqs.shape:', freqs.shape)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     freqs_cis = freqs_cis.to(device=device)
     return freqs_cis
@@ -134,8 +134,8 @@ freqs_cis = precompute_freqs_cis(
     config.n_embd // config.n_head, config.block_size
 )
 
-print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
-print(freqs_cis[1,:])
+# print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
+# print(freqs_cis[1,:])
 
 # (batch_size, seq_len, n_head, head_dim)
 # head_dim = n_embd // n_head, 768 // 12 = 64
@@ -157,15 +157,25 @@ xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 
 
 # pdb.set_trace()
 
-xq_out, xk_out = apply_rotary_emb(xq, xk, freqs_cis)
+# xq_out, xk_out = apply_rotary_emb(xq, xk, freqs_cis)
 
-# for i in range(50):
-#     t1 = time.time()
-#     # execute without gradient tracking
-#     with torch.no_grad():
-#         xq_out, xk_out = apply_rotary_emb(xq, xk, freqs_cis)
-#     t2 = time.time()
-#     print('time:', t2 - t1)
+execution_times = []
+
+for i in range(50):
+    t1 = time.time()
+    # execute without gradient tracking
+    with torch.no_grad():
+        xq_out, xk_out = apply_rotary_emb(xq, xk, freqs_cis)
+    t2 = time.time()
+    # print time in nano seconds
+    time_ns = (t2 - t1) * 1e9
+    execution_times.append(time_ns)
+    print('time taken:', (t2 - t1) * 1e9, 'ns')
+    
+    
+# find median of execution time
+median_time = sorted(execution_times)[len(execution_times) // 2]
+print('median time taken:', median_time, 'ns')
 
 # pdb.set_trace()
 

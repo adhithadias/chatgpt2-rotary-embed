@@ -26,10 +26,10 @@ class ApplyRotaryEmb(torch.autograd.Function):
         assert sin.shape == (rotary_seqlen, rotary_dim // 2)
         x_ro = x[..., :rotary_dim]
         x1, x2 = x_ro.chunk(2, dim=-1) if not interleaved else (x_ro[..., ::2], x_ro[..., 1::2])
-        print('///////')
-        print(x1)
-        print('===========')
-        print(x2)
+        # print('///////')
+        # print(x1)
+        # print('===========')
+        # print(x2)
         out = torch.empty_like(x) if not inplace else x
         out_ro = out[..., :rotary_dim]
         if inplace:
@@ -40,13 +40,13 @@ class ApplyRotaryEmb(torch.autograd.Function):
                 if not interleaved
                 else (out_ro[..., ::2], out_ro[..., 1::2])
             )
-        print('x.shape:', x.shape)
-        print('x1.shape:', x1.shape)
-        print('x2.shape:', x2.shape)
-        print('cos[:seqlen].shape:', cos[:seqlen].shape)
-        print('sin[:seqlen].shape:', sin[:seqlen].shape)
-        print('o1.shape:', o1.shape)
-        print('o2.shape:', o2.shape)
+        # print('x.shape:', x.shape)
+        # print('x1.shape:', x1.shape)
+        # print('x2.shape:', x2.shape)
+        # print('cos[:seqlen].shape:', cos[:seqlen].shape)
+        # print('sin[:seqlen].shape:', sin[:seqlen].shape)
+        # print('o1.shape:', o1.shape)
+        # print('o2.shape:', o2.shape)
         rotary_emb.apply_rotary(
             x1,
             x2,

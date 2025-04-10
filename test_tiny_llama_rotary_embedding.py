@@ -2,6 +2,7 @@ from typing import Tuple
 import torch
 from dataclasses import dataclass
 from rotary_embedding import apply_rotary_emb_func
+import time
 
 @dataclass
 class GPTConfig:
@@ -24,22 +25,22 @@ def build_rope_cache(
     https://github.com/labmlai/annotated_deep_learning_paper_implementations/blob/master/license.
     """
     # $\Theta = {\theta_i = 10000^{\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$
-    print(n_elem)
+    # print(n_elem)
     theta = 1.0 / (base ** (torch.arange(0, n_elem, 2, device=device) / n_elem))
-    print('theta.shape:', theta.shape)
-    print('theta:', theta)
+    # print('theta.shape:', theta.shape)
+    # print('theta:', theta)
 
     # Create position indexes `[0, 1, ..., seq_len - 1]`
     seq_idx = torch.arange(seq_len, device=device) / condense_ratio
-    print('seq_idx.shape:', seq_idx.shape)
+    # print('seq_idx.shape:', seq_idx.shape)
 
     # Calculate the product of position index and $\theta_i$
     idx_theta = torch.outer(seq_idx, theta)
-    print('idx_theta.shape:', idx_theta.shape)
+    # print('idx_theta.shape:', idx_theta.shape)
 
     cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
     
-    print('cos.dtype:', cos.dtype)
+    # print('cos.dtype:', cos.dtype)
 
     # added by peiyuan to ensure same data type with q, k, to use fused rotary embedding
     if dtype == torch.bfloat16:
@@ -48,7 +49,7 @@ def build_rope_cache(
     if dtype in (torch.float16, torch.bfloat16, torch.int8):
         return cos.half(), sin.half()
     
-    print('cos.dtype:', cos.dtype)
+    # print('cos.dtype:', cos.dtype)
     return cos, sin
 
 
@@ -83,10 +84,10 @@ sin, cos = build_rope_cache(
     condense_ratio=1,
 )
 
-print(sin.shape)  # Expected output: torch.Size([1024, 64])
-print(sin[1,:])
-print(cos.shape)  # Expected output: torch.Size([1024, 64])
-print(cos[1,:])
+# print(sin.shape)  # Expected output: torch.Size([1024, 64])
+# print(sin[1,:])
+# print(cos.shape)  # Expected output: torch.Size([1024, 64])
+# print(cos[1,:])
 
 if torch.cuda.is_available():
     device = torch.device('cuda')
@@ -106,12 +107,27 @@ total_elements = 2 * 1024 * 12 * 64
 q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 12, 64).to(dtype=torch.float32, device=device)
 k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 12, 64).to(dtype=torch.float32, device=device)
 
-print('q.dtype:', q.dtype)
+# print('q.dtype:', q.dtype)
+
+execution_times = []
 
 # apply rope in fp32 significanly stabalize training
 # fused rope expect (batch_size, seqlen, nheads, headdim)
-q = apply_rotary_emb_func(q, cos, sin, True, True)
-k = apply_rotary_emb_func(k, cos, sin, True, True)
+for i in range(50):
+    t1 = time.time()
+    # execute without gradient tracking
+    with torch.no_grad():
+        q = apply_rotary_emb_func(q, cos, sin, True, True)
+        k = apply_rotary_emb_func(k, cos, sin, True, True)
+    t2 = time.time()
+    # print time in nano seconds
+    time_ns = (t2 - t1) * 1e9
+    execution_times.append(time_ns)
+    print('time taken:', (t2 - t1) * 1e9, 'ns')
 
-print('=========')
-print(q)
+# print('=========')
+# print(q)
+
+# find median of execution time
+median_time = sorted(execution_times)[len(execution_times) // 2]
+print('median time taken:', median_time, 'ns')
