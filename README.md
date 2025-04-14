@@ -10,6 +10,7 @@ pip install ninja
 pip install wheel
 
 # bypass ImportError: libc10.so: cannot open shared object file: No such file or directory. Needs for importing shared libraries such as libc10.so, libtorch.so, libtorch_cpu.so, etc
+# IMPORTANT: Set the path properly
 export LD_LIBRARY_PATH="/home/min/a/$USER/scratch-space/workspace/build-nanogpt/.venv/lib/python3.10/site-packages/torch/lib/:$LD_LIBRARY_PATH"
 
 cd rotary
@@ -23,6 +24,8 @@ pip install --no-cache-dir -e .
 python train_gpt2.py
 python test_llama_rotary_embedding.py
 python test_tiny_llama_rotary_embedding.py
+
+nsys profile -f true -o nsys_demo0 python nsys_demo0.py
 ```
 
 

@@ -8,6 +8,7 @@ import torch
 import pdb
 # import time
 import time
+import nvtx
 
 @dataclass
 class GPTConfig:
@@ -79,10 +80,10 @@ def apply_rotary_emb(
     # print(freqs_cis)
     # print('freqs_cis device', freqs_cis.device)
     # print('xq_ device', xq_.device)
-    xq_out = xq_ * freqs_cis
+    # xq_out = xq_ * freqs_cis
     # print('==========')
     # print(xq_out)
-    xq_out = torch.view_as_real(xq_out).flatten(3)
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
@@ -165,7 +166,10 @@ for i in range(50):
     t1 = time.time()
     # execute without gradient tracking
     with torch.no_grad():
+        start = nvtx.start_range(message="matmul", color="blue")
         xq_out, xk_out = apply_rotary_emb(xq, xk, freqs_cis)
+        torch.cuda.synchronize()
+        nvtx.end_range(start)
     t2 = time.time()
     # print time in nano seconds
     time_ns = (t2 - t1) * 1e9

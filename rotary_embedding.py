@@ -2,6 +2,7 @@
 
 import math
 from typing import Optional, Tuple
+import time
 
 import rotary_emb
 import torch
@@ -99,3 +100,80 @@ class ApplyRotaryEmb(torch.autograd.Function):
 
 
 apply_rotary_emb_func = ApplyRotaryEmb.apply
+
+# def apply_rotary_emb_func(x, cos, sin, interleaved=False, inplace=False):
+#         """
+#             x: (batch_size, seqlen, nheads, headdim)
+#             cos, sin: (seqlen, rotary_dim / 2)
+#             interleaved: if True, rotate pairs of even and odd dimensions (GPT-J style) instead
+#                 of 1st half and 2nd half (GPT-NeoX style).
+#         rotary_dim must be <= headdim
+#         Apply rotary embedding to the first rotary_dim of x.
+#         """
+#         batch, seqlen, nheads, headdim = x.shape
+#         rotary_seqlen, rotary_dim = cos.shape
+#         rotary_dim *= 2
+#         assert rotary_dim <= headdim
+#         assert seqlen <= rotary_seqlen
+#         assert sin.shape == (rotary_seqlen, rotary_dim // 2)
+#         # x_ro = x[..., :rotary_dim]
+#         x_ro = x
+#         # torch.cuda.synchronize()
+#         # t1 = time.time()
+#         x1, x2 = x_ro.chunk(2, dim=-1) if not interleaved else (x_ro[..., ::2], x_ro[..., 1::2])
+#         t2 = time.time()
+#         # torch.cuda.synchronize()
+#         # print('time taken for chunking:', (t2 - t1) * 1e9, 'ns')
+#         # print('///////')
+#         # print(x1)
+#         # print('===========')
+#         # print(x2)
+#         # torch.cuda.synchronize()
+#         # t1 = time.time()
+#         out = torch.empty_like(x) if not inplace else x
+#         # out_ro = out[..., :rotary_dim]
+#         out_ro = out
+#         if inplace:
+#             o1, o2 = x1, x2
+#         else:
+#             o1, o2 = (
+#                 out_ro.chunk(2, dim=-1)
+#                 if not interleaved
+#                 else (out_ro[..., ::2], out_ro[..., 1::2])
+#             )
+#         # t2 = time.time()
+#         # torch.cuda.synchronize()
+#         # print('time taken for output:', (t2 - t1) * 1e9, 'ns')
+#         # print('x.shape:', x.shape)
+#         # print('x1.shape:', x1.shape)
+#         # print('x2.shape:', x2.shape)
+#         # print('cos[:seqlen].shape:', cos[:seqlen].shape)
+#         # print('sin[:seqlen].shape:', sin[:seqlen].shape)
+#         # print('o1.shape:', o1.shape)
+#         # print('o2.shape:', o2.shape)
+#         # torch.cuda.synchronize()
+#         # t1 = time.time()
+#         rotary_emb.apply_rotary(
+#             x1,
+#             x2,
+#             rearrange(cos[:seqlen], "s d -> s 1 d"),
+#             rearrange(sin[:seqlen], "s d -> s 1 d"),
+#             o1,
+#             o2,
+#             False,
+#         )
+#         # t2 = time.time()
+#         # torch.cuda.synchronize()
+#         # print('time taken for function:', (t2 - t1) * 1e9, 'ns')
+#         # torch.cuda.synchronize()
+#         # t1 = time.time()
+#         if not inplace and rotary_dim < headdim:
+#             print('not in place')
+#             out[..., rotary_dim:].copy_(x[..., rotary_dim:])
+#         # ctx.save_for_backward(cos, sin)
+#         # ctx.interleaved = interleaved
+#         # ctx.inplace = inplace
+#         # t2 = time.time()
+#         # torch.cuda.synchronize()
+#         # print('time taken for output and context:', (t2 - t1) * 1e9, 'ns')
+#         return out if not inplace else x

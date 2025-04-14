@@ -27,8 +27,8 @@
                  iter, [] GPU_LAMBDA (scalar_t x1, scalar_t x2, scalar_t cos,
                                      scalar_t sin) -> thrust::tuple<scalar_t, scalar_t> {
                 // interchanged sin and cos from the original implementation to match complex number implementation
-                 scalar_t out1 = float(x1) * float(sin) - float(x2) * float(cos);
-                 scalar_t out2 = float(x1) * float(cos) + float(x2) * float(sin);
+                 scalar_t out1 = float(x1) * float(cos) - float(x2) * float(sin);
+                 scalar_t out2 = float(x1) * float(sin) + float(x2) * float(cos);
                  return {out1, out2};
              });
          });
@@ -37,8 +37,8 @@
              at::native::gpu_kernel_multiple_outputs(
                  iter, [] GPU_LAMBDA (scalar_t x1, scalar_t x2, scalar_t cos,
                                      scalar_t sin) -> thrust::tuple<scalar_t, scalar_t> {
-                 scalar_t out1 = float(x1) * float(sin) + float(x2) * float(cos);
-                 scalar_t out2 = -float(x1) * float(cos) + float(x2) * float(sin);
+                 scalar_t out1 = float(x1) * float(cos) + float(x2) * float(sin);
+                 scalar_t out2 = -float(x1) * float(sin) + float(x2) * float(cos);
                  return {out1, out2};
              });
          });

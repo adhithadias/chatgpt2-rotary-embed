@@ -3,6 +3,7 @@ import torch
 from dataclasses import dataclass
 from rotary_embedding import apply_rotary_emb_func
 import time
+import nvtx
 
 @dataclass
 class GPTConfig:
@@ -113,13 +114,19 @@ execution_times = []
 
 # apply rope in fp32 significanly stabalize training
 # fused rope expect (batch_size, seqlen, nheads, headdim)
+torch.cuda.synchronize()
 for i in range(50):
+    # add nvtx annotation
+    nvtx.range_push("apply_rotary_emb_func")
     t1 = time.time()
     # execute without gradient tracking
     with torch.no_grad():
-        q = apply_rotary_emb_func(q, cos, sin, True, True)
-        k = apply_rotary_emb_func(k, cos, sin, True, True)
+        xq = apply_rotary_emb_func(q, cos, sin, False, True)
+        xk = apply_rotary_emb_func(k, cos, sin, False, True)
+    # include cuda synchronize
+    torch.cuda.synchronize()
     t2 = time.time()
+    nvtx.range_pop()
     # print time in nano seconds
     time_ns = (t2 - t1) * 1e9
     execution_times.append(time_ns)

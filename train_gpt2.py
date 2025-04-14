@@ -114,9 +114,16 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head)
         q = q.view(B, T, self.n_head, C // self.n_head)
         
+        # print('k', k.shape)
+        # print('q', q.shape)
+        
         # apply rotary embedding to the keys
         q, k = apply_rotary_emb(q, k, freqs_cis)
         
+        # print('k', k.shape)
+        # print('q', q.shape)
+        # exit(0)
+                    
         k = k.transpose(1, 2) # (B, nh, T, hs)
         q = q.transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
