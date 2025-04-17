@@ -1,13 +1,13 @@
 from typing import Tuple
 import torch
 from dataclasses import dataclass
-from rotary_embedding import apply_rotary_emb_func
+from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2
 import time
 import nvtx
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024 # max sequence length
+    block_size: int = 2 # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
@@ -66,7 +66,7 @@ def build_rope_cache(
 model_type = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
 
 config_args = {
-    'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+    'gpt2':         dict(n_layer=12, n_head=2, n_embd=8),  # 124M params
     'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
     'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
     'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
@@ -77,15 +77,17 @@ if torch.cuda.is_available():
 
 config = GPTConfig(**config_args)
 
+dtype = torch.bfloat16
+
 sin, cos = build_rope_cache(
     seq_len=config.block_size,
     n_elem=int(config.rotary_percentage * config.n_embd // config.n_head),
-    dtype=torch.float32,
+    dtype=dtype,
     device=device,
     condense_ratio=1,
 )
 
-# print(sin.shape)  # Expected output: torch.Size([1024, 64])
+print('sin shape', sin.shape)  # Expected output: torch.Size([1024, 64])
 # print(sin[1,:])
 # print(cos.shape)  # Expected output: torch.Size([1024, 64])
 # print(cos[1,:])
@@ -102,12 +104,19 @@ if torch.cuda.is_available():
 # q = torch.ones(2, 1024, 12, 64).to(device=device, dtype=torch.float32)
 # k = torch.ones(2, 1024, 12, 64).to(device=device, dtype=torch.float32)
 
-base_tensor = torch.tensor([1, 2, 3, 4])
-total_elements = 2 * 1024 * 12 * 64
+print('cos\n', cos)
+print('sin\n', sin)
 
-q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 12, 64).to(dtype=torch.float32, device=device)
-k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 12, 64).to(dtype=torch.float32, device=device)
+batch_size = 2
+base_tensor = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+total_elements = batch_size * config.block_size * config.n_head * (config.n_embd // config.n_head)
 
+q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
+k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
+
+print('q:\n', q)
+
+print('q.shape:', q.shape)
 # print('q.dtype:', q.dtype)
 
 execution_times = []
@@ -115,25 +124,33 @@ execution_times = []
 # apply rope in fp32 significanly stabalize training
 # fused rope expect (batch_size, seqlen, nheads, headdim)
 torch.cuda.synchronize()
-for i in range(50):
+for i in range(2):
     # add nvtx annotation
-    nvtx.range_push("apply_rotary_emb_func")
     t1 = time.time()
     # execute without gradient tracking
     with torch.no_grad():
-        xq = apply_rotary_emb_func(q, cos, sin, False, True)
-        xk = apply_rotary_emb_func(k, cos, sin, False, True)
+        start = nvtx.start_range(message="custom_rope", color="blue")
+        # xq = apply_rotary_emb_func(q, cos, sin, True, False)
+        # xk = apply_rotary_emb_func(k, cos, sin, True, False)
+        
+        xq = apply_rotary_emb_func2(q, cos, sin, True, False)
+        # xk = apply_rotary_emb_func2(k, cos, sin, True, False)
+        
+        torch.cuda.synchronize()
+        nvtx.end_range(start)
     # include cuda synchronize
-    torch.cuda.synchronize()
     t2 = time.time()
-    nvtx.range_pop()
+    
     # print time in nano seconds
     time_ns = (t2 - t1) * 1e9
     execution_times.append(time_ns)
     print('time taken:', (t2 - t1) * 1e9, 'ns')
 
-# print('=========')
-# print(q)
+print('=========')
+print(q)
+print('=========')
+print(xq)
+
 
 # find median of execution time
 median_time = sorted(execution_times)[len(execution_times) // 2]
