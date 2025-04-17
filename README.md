@@ -60,3 +60,9 @@ pip install xformers lightning flash_attn lightning_utilities
 ```
 
 
+
+```
+V100 GPUs does not support sm_80. So I had to force everything to use float32
+
+
+```
