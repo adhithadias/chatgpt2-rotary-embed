@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from typing import Tuple
+from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2
 
 # -----------------------------------------------------------------------------
 
@@ -104,7 +105,7 @@ class CausalSelfAttention(nn.Module):
                                      .view(1, 1, config.block_size, config.block_size))
         self.rotary = RotaryEmbedding(config.n_embd)
 
-    def forward(self, x, freqs_cis):
+    def forward(self, x, freqs_cis, sin=None, cos=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
@@ -118,7 +119,13 @@ class CausalSelfAttention(nn.Module):
         # print('q', q.shape)
         
         # apply rotary embedding to the keys
-        q, k = apply_rotary_emb(q, k, freqs_cis)
+        # q, k = apply_rotary_emb(q, k, freqs_cis)
+        
+        # q = apply_rotary_emb_func(q, sin, cos, True, False)
+        # k = apply_rotary_emb_func(k, sin, cos, True, False)
+        
+        q = apply_rotary_emb_func2(q, sin, cos, True, False)
+        k = apply_rotary_emb_func2(k, sin, cos, True, False)
         
         # print('k', k.shape)
         # print('q', q.shape)
@@ -160,8 +167,8 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
 
-    def forward(self, x, freqs_cis):
-        x = x + self.attn(self.ln_1(x), freqs_cis)
+    def forward(self, x, freqs_cis, sin=None, cos=None):
+        x = x + self.attn(self.ln_1(x), freqs_cis, sin, cos)
         x = x + self.mlp(self.ln_2(x))
         return x
     
@@ -189,6 +196,44 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     freqs_cis = freqs_cis.to(device=device)
     return freqs_cis
+
+RoPECache = Tuple[torch.Tensor, torch.Tensor]
+def build_rope_cache(
+    seq_len: int, n_elem: int, dtype: torch.dtype, device: torch.device, base: int = 10000, condense_ratio: int = 1
+) -> RoPECache:
+    """Enhanced Transformer with Rotary Position Embedding.
+
+    Derived from: https://github.com/labmlai/annotated_deep_learning_paper_implementations/blob/master/labml_nn/
+    transformers/rope/__init__.py. MIT License:
+    https://github.com/labmlai/annotated_deep_learning_paper_implementations/blob/master/license.
+    """
+    # $\Theta = {\theta_i = 10000^{\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$
+    # print(n_elem)
+    theta = 1.0 / (base ** (torch.arange(0, n_elem, 2, device=device) / n_elem))
+    # print('theta.shape:', theta.shape)
+    # print('theta:', theta)
+
+    # Create position indexes `[0, 1, ..., seq_len - 1]`
+    seq_idx = torch.arange(seq_len, device=device) / condense_ratio
+    # print('seq_idx.shape:', seq_idx.shape)
+
+    # Calculate the product of position index and $\theta_i$
+    idx_theta = torch.outer(seq_idx, theta)
+    # print('idx_theta.shape:', idx_theta.shape)
+
+    cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
+    
+    # print('cos.dtype:', cos.dtype)
+
+    # added by peiyuan to ensure same data type with q, k, to use fused rotary embedding
+    if dtype == torch.bfloat16:
+        return cos.bfloat16(), sin.bfloat16()
+    # this is to mimic the behaviour of complex32, else we will get different results
+    if dtype in (torch.float16, torch.bfloat16, torch.int8):
+        return cos.half(), sin.half()
+    
+    # print('cos.dtype:', cos.dtype)
+    return cos, sin
 
 @dataclass
 class GPTConfig:
@@ -219,9 +264,9 @@ class GPT(nn.Module):
         # init params
         self.apply(self._init_weights)
         
-        self.freqs_cis = precompute_freqs_cis(
-            config.n_embd // config.n_head, config.block_size
-        )
+        self.freqs_cis = None
+        self.sin = None
+        self.cos = None
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -237,17 +282,32 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None):
         # idx is of shape (B, T)
         B, T = idx.size()
-        self.freqs_cis = self.freqs_cis.to(device=idx.device)
+        # print('idx', idx.shape)
+        if self.freqs_cis is None or self.freqs_cis.shape[0] != T:
+            self.freqs_cis = precompute_freqs_cis(
+                self.config.n_embd // self.config.n_head, T
+            )
+            self.freqs_cis = self.freqs_cis.to(device=idx.device)
+            self.cos, self.sin = build_rope_cache(
+                seq_len = T, 
+                n_elem = int(self.config.n_embd // self.config.n_head),
+                dtype = torch.bfloat16,
+                device = idx.device,
+                condense_ratio = 1,
+            )
+            print('cos', self.cos.shape)
+            print('sin', self.sin.shape)
+            print('freqs_cis', self.freqs_cis.shape)
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
         # forward the token and posisition embeddings
-        pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
+        # pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
         # pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
         x = tok_emb
         # x = tok_emb + pos_emb
         # forward the blocks of the transformer
         for block in self.transformer.h:
-            x = block(x, freqs_cis = self.freqs_cis)
+            x = block(x, freqs_cis = self.freqs_cis, sin=self.sin, cos=self.cos)
         # forward the final layernorm and the classifier
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
@@ -390,7 +450,7 @@ torch.set_float32_matmul_precision('high')
 # get logits
 model = GPT(GPTConfig(vocab_size=50304), device=device)
 model.to(device)
-model = torch.compile(model)
+# model = torch.compile(model)
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
@@ -447,6 +507,7 @@ import sys; sys.exit(0)
 model.eval()
 num_return_sequences = 5
 max_length = 30
+enc = tiktoken.get_encoding('gpt2')
 tokens = enc.encode("Hello, I'm a language model,")
 tokens = torch.tensor(tokens, dtype=torch.long) # (8,)
 tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (5, 8)
@@ -459,7 +520,7 @@ torch.cuda.manual_seed(42)
 while x.size(1) < max_length:
     # forward the model to get the logits
     with torch.no_grad():
-        logits = model(x) # (B, T, vocab_size)
+        logits, loss = model(x) # (B, T, vocab_size)
         # take the logits at the last position
         logits = logits[:, -1, :] # (B, vocab_size)
         # get the probabilities
