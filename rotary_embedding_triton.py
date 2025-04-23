@@ -8,6 +8,7 @@ def rotary_kernel(
     cos_ptr,         # pointer to cos
     sin_ptr,         # pointer to sin
     out_ptr,         # pointer to output tensor
+    conj,            # conjugate flag
     B, S, H, D,      # batch, sequence, heads, dimension                #2, 2, 2, 4
     stride_bs, stride_sh, stride_hd,  # strides                         #16, 8, 4
     BLOCK_D: tl.constexpr # optimize the kernel assuming it is fixed.
@@ -49,8 +50,12 @@ def rotary_kernel(
     # sin = tl.load(sin_ptr + s * (D // 2) + offs, ...)  # shape: [BLOCK_D // 2]
 
     # Triton does not support complex numbers natively, so we'll have to use the real-img approach
-    x_rotated_even = x1 * cos - x2 * sin
-    x_rotated_odd = x1 * sin + x2 * cos
+    if not conj:        # Forward pass
+        x_rotated_even = x1 * cos - x2 * sin
+        x_rotated_odd = x1 * sin + x2 * cos
+    else:               # Backward pass
+        x_rotated_even = x1 * cos + x2 * sin
+        x_rotated_odd = -x1 * sin + x2 * cos
 
     # # Interleave
     # out = tl.zeros([BLOCK_D], dtype=tl.float32)
@@ -79,14 +84,14 @@ def rotary_kernel(
     # tl.store(out_ptr + x_offset, out, mask=mask)
 
 
-def apply_rotary(x, cos, sin, out=None):
+def apply_rotary(x, cos, sin, out=None, conj=False):
     B, S, H, D = x.shape
     if out is None:
         out = torch.empty_like(x)
     
     grid = (B, S, H)
     rotary_kernel[grid](
-        x, cos, sin, out,
+        x, cos, sin, out, conj,
         B, S, H, D,
         x.stride(0), x.stride(1), x.stride(2),
         BLOCK_D=triton.next_power_of_2(D)       # Set the feature dimension to a power of 2
