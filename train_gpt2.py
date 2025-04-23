@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from typing import Tuple
-from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2
+from rotary_embedding import apply_rotary_emb_func, \
+    apply_rotary_emb_func2, apply_rotary_emb_func3
 
 # -----------------------------------------------------------------------------
 
@@ -127,8 +128,11 @@ class CausalSelfAttention(nn.Module):
         # q = apply_rotary_emb_func(q, sin, cos, True, False)
         # k = apply_rotary_emb_func(k, sin, cos, True, False)
         
-        q = apply_rotary_emb_func2(q, sin, cos, True, False)
-        k = apply_rotary_emb_func2(k, sin, cos, True, False)
+        # q = apply_rotary_emb_func2(q, sin, cos, True, False)
+        # k = apply_rotary_emb_func2(k, sin, cos, True, False)
+        
+        q = apply_rotary_emb_func3(q, sin, cos, True, False)
+        k = apply_rotary_emb_func3(k, sin, cos, True, False)
         
         # print('k', k.shape)
         # print('q', q.shape)
