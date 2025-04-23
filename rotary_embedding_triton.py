@@ -48,6 +48,7 @@ def rotary_kernel(
     # cos = tl.load(cos_ptr + s * (D // 2) + offs, ...)  # shape: [BLOCK_D // 2]
     # sin = tl.load(sin_ptr + s * (D // 2) + offs, ...)  # shape: [BLOCK_D // 2]
 
+    # Triton does not support complex numbers natively, so we'll have to use the real-img approach
     x_rotated_even = x1 * cos - x2 * sin
     x_rotated_odd = x1 * sin + x2 * cos
 
