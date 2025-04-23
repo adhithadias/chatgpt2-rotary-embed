@@ -9,6 +9,9 @@ from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2
 
 # -----------------------------------------------------------------------------
 
+B = 8 # micro batch size
+T = 1024 # sequence length
+
 class RotaryEmbedding(nn.Module):
     """Rotary position encoding module"""
 
@@ -436,8 +439,6 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 total_batch_size = 524288 # 2**19, ~0.5M, in number of tokens
-B = 4 # micro batch size
-T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
