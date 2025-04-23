@@ -6,10 +6,10 @@ import time
 import nvtx
 
 BENCHMARK_FREQUENCY = 100
-batch_size = 4
+batch_size = 8
 
-# dtype = torch.float32
-dtype = torch.bfloat16
+dtype = torch.float32
+# dtype = torch.bfloat16
 
 model_type = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
 
@@ -22,7 +22,7 @@ config_args = {
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024 # max sequence length
+    block_size: int = 4096 # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
@@ -108,8 +108,8 @@ if torch.cuda.is_available():
 # q = torch.ones(2, 1024, 12, 64).to(device=device, dtype=torch.float32)
 # k = torch.ones(2, 1024, 12, 64).to(device=device, dtype=torch.float32)
 
-print('cos\n', cos)
-print('sin\n', sin)
+# print('cos\n', cos)
+# print('sin\n', sin)
 
 base_tensor = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
 total_elements = batch_size * config.block_size * config.n_head * (config.n_embd // config.n_head)
@@ -117,7 +117,7 @@ total_elements = batch_size * config.block_size * config.n_head * (config.n_embd
 q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
 k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
 
-print('q:\n', q)
+# print('q:\n', q)
 
 # print('q.shape:', q.shape)
 # print('q.dtype:', q.dtype)
@@ -147,12 +147,12 @@ for i in range(BENCHMARK_FREQUENCY):
     # print time in nano seconds
     time_ns = (t2 - t1) * 1e6
     execution_times.append(time_ns)
-    # print('time taken:', (t2 - t1) * 1e6, 'ms')
+    print('time taken:', (t2 - t1) * 1e6, 'ms')
 
-print('=========')
-print(q)
-print('=========')
-print(xq)
+# print('=========')
+# print(q)
+# print('=========')
+# print(xq)
 
 
 # find median of execution time
