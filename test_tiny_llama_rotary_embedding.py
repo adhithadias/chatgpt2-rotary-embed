@@ -7,7 +7,7 @@ import time
 import nvtx
 
 BENCHMARK_FREQUENCY = 100
-batch_size = 1
+batch_size = 32
 
 dtype = torch.float32
 # dtype = torch.bfloat16
@@ -134,11 +134,12 @@ for i in range(BENCHMARK_FREQUENCY):
     # execute without gradient tracking
     with torch.no_grad():
         # start = nvtx.start_range(message="custom_rope", color="blue")
-        # xq = apply_rotary_emb_func(q, cos, sin, True, False)
-        # xk = apply_rotary_emb_func(k, cos, sin, True, False)
         
-        xq = apply_rotary_emb_triton(q, cos, sin, True, False)
-        xk = apply_rotary_emb_triton(k, cos, sin, True, False)
+        xq = apply_rotary_emb_func3(q, cos, sin, True, False)
+        xk = apply_rotary_emb_func3(k, cos, sin, True, False)
+        
+        # xq = apply_rotary_emb_triton(q, cos, sin, True, False)
+        # xk = apply_rotary_emb_triton(k, cos, sin, True, False)
         
         torch.cuda.synchronize()
         # nvtx.end_range(start)
@@ -154,11 +155,11 @@ for i in range(BENCHMARK_FREQUENCY):
 # print('=========')
 # print(q)
 # print('=========')
-# print(xq)
+print(xq)
 
 
 # find median of execution time
 median_time = sorted(execution_times)[len(execution_times) // 2]
 
 # print median time with 2 decimal places
-print('median time taken:', f"{median_time:.2f}", 'ms')
+print('median time taken:', f"{median_time:.2f}", 'us')
