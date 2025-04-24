@@ -11,7 +11,7 @@ import time
 import nvtx
 
 BENCHMARK_FREQUENCY = 100
-batch_size = 4
+batch_size = 1
 dtype = torch.float32
 if torch.cuda.is_available():
     device = torch.device('cuda')
@@ -27,7 +27,7 @@ config_args = {
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024 # max sequence length
+    block_size: int = 2048 # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
@@ -172,10 +172,10 @@ for i in range(BENCHMARK_FREQUENCY):
     t1 = time.time()
     # execute without gradient tracking
     with torch.no_grad():
-        start = nvtx.start_range(message="matmul", color="blue")
+        # start = nvtx.start_range(message="matmul", color="blue")
         xq_out, xk_out = apply_rotary_emb(xq, xk, freqs_cis)
         torch.cuda.synchronize()
-        nvtx.end_range(start)
+        # nvtx.end_range(start)
     t2 = time.time()
     # print time in nano seconds
     time_ns = (t2 - t1) * 1e6
