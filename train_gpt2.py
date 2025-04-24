@@ -8,6 +8,9 @@ from typing import Tuple
 from rotary_embedding import apply_rotary_emb_func, \
     apply_rotary_emb_func2, apply_rotary_emb_func3, \
         apply_rotary_emb_triton
+import nvtx
+
+enable_nvtx = False
 
 # -----------------------------------------------------------------------------
 
@@ -115,16 +118,23 @@ class CausalSelfAttention(nn.Module):
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
         # e.g. in GPT-2 (124M), n_head=12, hs=64, so nh*hs=C=768 channels in the Transformer
+        if enable_nvtx: 
+            start = nvtx.start_range(message="qkv_proj", color="blue")
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head)
         q = q.view(B, T, self.n_head, C // self.n_head)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         
         # print('k', k.shape)
         # print('q', q.shape)
+        if enable_nvtx:
+            start = nvtx.start_range(message="rope", color="blue")
         
         # apply rotary embedding to the keys
-        # q, k = apply_rotary_emb(q, k, freqs_cis)
+        q, k = apply_rotary_emb(q, k, freqs_cis)
         
         # q = apply_rotary_emb_func(q, sin, cos, True, False)
         # k = apply_rotary_emb_func(k, sin, cos, True, False)
@@ -136,13 +146,18 @@ class CausalSelfAttention(nn.Module):
         # k = apply_rotary_emb_func3(k, sin, cos, True, False)
         
         # triton implementation does not work because bfloat16 is not implemented
-        q = apply_rotary_emb_triton(q, cos, sin, True, False)
-        k = apply_rotary_emb_triton(k, cos, sin, True, False)
+        # q = apply_rotary_emb_triton(q, cos, sin, True, False)
+        # k = apply_rotary_emb_triton(k, cos, sin, True, False)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         
         # print('k', k.shape)
         # print('q', q.shape)
         # exit(0)
                     
+        if enable_nvtx:
+            start = nvtx.start_range(message="fsdpa", color="blue")
         k = k.transpose(1, 2) # (B, nh, T, hs)
         q = q.transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -151,8 +166,18 @@ class CausalSelfAttention(nn.Module):
         
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # flash attention
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
+        
+        if enable_nvtx:
+            start = nvtx.start_range(message="output_proj", color="blue")
         # output projection
         y = self.c_proj(y)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         return y
 
 class MLP(nn.Module):
@@ -180,8 +205,27 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x, freqs_cis, sin=None, cos=None):
-        x = x + self.attn(self.ln_1(x), freqs_cis, sin, cos)
-        x = x + self.mlp(self.ln_2(x))
+        if enable_nvtx:
+            start = nvtx.start_range(message="layer-norm", color="blue")
+        x = self.ln_1(x)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
+            start = nvtx.start_range(message="attention", color="blue")
+        x = x + self.attn(x, freqs_cis, sin, cos)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
+            start = nvtx.start_range(message="layer-norm", color="blue")
+        x = self.ln_2(x)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
+            start = nvtx.start_range(message="mlp", color="blue")
+        x = x + self.mlp(x)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         return x
     
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
@@ -314,18 +358,41 @@ class GPT(nn.Module):
         # forward the token and posisition embeddings
         # pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
         # pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
+        if enable_nvtx:
+            start = nvtx.start_range(message="token-emb", color="blue")
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
         x = tok_emb
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         # x = tok_emb + pos_emb
         # forward the blocks of the transformer
+        if enable_nvtx:
+            start = nvtx.start_range(message="transformer", color="blue")
         for block in self.transformer.h:
             x = block(x, freqs_cis = self.freqs_cis, sin=self.sin, cos=self.cos)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         # forward the final layernorm and the classifier
+        if enable_nvtx:
+            start = nvtx.start_range(message="layer-norm-final", color="blue")
         x = self.transformer.ln_f(x)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
+            start = nvtx.start_range(message="lm-head", color="blue")
         logits = self.lm_head(x) # (B, T, vocab_size)
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
+            start = nvtx.start_range(message="loss", color="blue")
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        if enable_nvtx:
+            torch.cuda.synchronize()
+            nvtx.end_range(start)
         return logits, loss
 
     @classmethod
@@ -465,7 +532,7 @@ model.to(device)
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 10
-max_steps = 55
+max_steps = 25
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
     if it < warmup_steps:
