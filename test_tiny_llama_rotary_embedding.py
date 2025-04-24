@@ -6,7 +6,7 @@ import time
 import nvtx
 
 BENCHMARK_FREQUENCY = 100
-batch_size = 8
+batch_size = 1
 
 dtype = torch.float32
 # dtype = torch.bfloat16
@@ -22,7 +22,7 @@ config_args = {
 
 @dataclass
 class GPTConfig:
-    block_size: int = 4096 # max sequence length
+    block_size: int = 2048 # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
@@ -137,7 +137,7 @@ for i in range(BENCHMARK_FREQUENCY):
         # xk = apply_rotary_emb_func(k, cos, sin, True, False)
         
         xq = apply_rotary_emb_func3(q, cos, sin, True, False)
-        # xk = apply_rotary_emb_func2(k, cos, sin, True, False)
+        xk = apply_rotary_emb_func3(k, cos, sin, True, False)
         
         torch.cuda.synchronize()
         nvtx.end_range(start)
