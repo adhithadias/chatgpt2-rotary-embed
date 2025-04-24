@@ -55,12 +55,12 @@ def rotary_kernel(
     # sin = tl.load(sin_ptr + s * (D // 2) + offs, ...)  # shape: [BLOCK_D // 2]
 
     # Triton does not support complex numbers natively, so we'll have to use the real-img approach
-    # if not conj:        # Forward pass
-    x_rotated_even = x1 * cos - x2 * sin
-    x_rotated_odd = x1 * sin + x2 * cos
-    # else:               # Backward pass
-    #     x_rotated_even = x1 * cos + x2 * sin
-    #     x_rotated_odd = -x1 * sin + x2 * cos
+    if not conj:        # Forward pass
+        x_rotated_even = x1 * cos - x2 * sin
+        x_rotated_odd = x1 * sin + x2 * cos
+    else:               # Backward pass
+        x_rotated_even = x1 * cos + x2 * sin
+        x_rotated_odd = -x1 * sin + x2 * cos
 
     # # Interleave
     # out = tl.zeros([BLOCK_D], dtype=tl.float32)
@@ -140,7 +140,7 @@ def apply_rotary(x, cos, sin, out=None, conj=False):
     B, S, H, D = x.shape
     if out is None:
         out = torch.empty_like(x)
-        out = out.contiguous()
+        # out = out.contiguous()
     
     # assert x.is_contiguous()
     # assert cos.is_contiguous() and sin.is_contiguous()
