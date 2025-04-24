@@ -20,6 +20,7 @@ files = {
     "cuda1": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda1.txt",
     "cuda2": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda2.txt",
     "cuda3": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda3.txt",
+    "triton": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/triton.txt",
 }
 
 # Extract data from each file
@@ -38,7 +39,8 @@ for label in data:
     data[label]["speedup"] = data[label]["median"] / baseline_median
     
 print("Speedup values:")
-
+for label in data:
+    print(f"{label}: {data[label]['speedup']:.4f}x")
 
 # Plotting
 plt.figure(figsize=(10, 6))
