@@ -266,6 +266,7 @@ class ApplyRotaryEmbTriton(torch.autograd.Function):
         # print('sin[:seqlen].shape:', sin[:seqlen].shape)
         # print('o1.shape:', o1.shape)
         # print('o2.shape:', o2.shape)
+        x = x.contiguous()
         apply_rotary(
             x,
             cos,
@@ -290,6 +291,7 @@ class ApplyRotaryEmbTriton(torch.autograd.Function):
         inplace = ctx.inplace
         do_ro = do[..., :rotary_dim]
         dx = torch.empty_like(do) if not inplace else do
+        do = do.contiguous()
         apply_rotary(
             do,
             cos,
