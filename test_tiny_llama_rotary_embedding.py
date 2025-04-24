@@ -1,13 +1,28 @@
 from typing import Tuple
 import torch
 from dataclasses import dataclass
-from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2
+from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2, apply_rotary_emb_func3
 import time
 import nvtx
 
+BENCHMARK_FREQUENCY = 100
+batch_size = 1
+
+dtype = torch.float32
+# dtype = torch.bfloat16
+
+model_type = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
+
+config_args = {
+    'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+    'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
+    'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
+    'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
+}[model_type]
+
 @dataclass
 class GPTConfig:
-    block_size: int = 2 # max sequence length
+    block_size: int = 2048 # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
@@ -41,7 +56,7 @@ def build_rope_cache(
 
     cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
     
-    # print('cos.dtype:', cos.dtype)
+    print('cos.dtype:', cos.dtype)
 
     # added by peiyuan to ensure same data type with q, k, to use fused rotary embedding
     if dtype == torch.bfloat16:
@@ -62,22 +77,11 @@ def build_rope_cache(
 #         device=idx.device,
 #         condense_ratio=self.config.condense_ratio,
 #     )
-    
-model_type = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
-
-config_args = {
-    'gpt2':         dict(n_layer=12, n_head=2, n_embd=8),  # 124M params
-    'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
-    'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
-    'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
-}[model_type]
 
 if torch.cuda.is_available():
     device = torch.device('cuda')
 
 config = GPTConfig(**config_args)
-
-dtype = torch.bfloat16
 
 sin, cos = build_rope_cache(
     seq_len=config.block_size,
@@ -104,19 +108,18 @@ if torch.cuda.is_available():
 # q = torch.ones(2, 1024, 12, 64).to(device=device, dtype=torch.float32)
 # k = torch.ones(2, 1024, 12, 64).to(device=device, dtype=torch.float32)
 
-print('cos\n', cos)
-print('sin\n', sin)
+# print('cos\n', cos)
+# print('sin\n', sin)
 
-batch_size = 2
 base_tensor = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
 total_elements = batch_size * config.block_size * config.n_head * (config.n_embd // config.n_head)
 
 q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
 k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
 
-print('q:\n', q)
+# print('q:\n', q)
 
-print('q.shape:', q.shape)
+# print('q.shape:', q.shape)
 # print('q.dtype:', q.dtype)
 
 execution_times = []
@@ -124,7 +127,7 @@ execution_times = []
 # apply rope in fp32 significanly stabalize training
 # fused rope expect (batch_size, seqlen, nheads, headdim)
 torch.cuda.synchronize()
-for i in range(2):
+for i in range(BENCHMARK_FREQUENCY):
     # add nvtx annotation
     t1 = time.time()
     # execute without gradient tracking
@@ -133,8 +136,8 @@ for i in range(2):
         # xq = apply_rotary_emb_func(q, cos, sin, True, False)
         # xk = apply_rotary_emb_func(k, cos, sin, True, False)
         
-        xq = apply_rotary_emb_func2(q, cos, sin, True, False)
-        # xk = apply_rotary_emb_func2(k, cos, sin, True, False)
+        xq = apply_rotary_emb_func3(q, cos, sin, True, False)
+        xk = apply_rotary_emb_func3(k, cos, sin, True, False)
         
         torch.cuda.synchronize()
         nvtx.end_range(start)
@@ -142,16 +145,18 @@ for i in range(2):
     t2 = time.time()
     
     # print time in nano seconds
-    time_ns = (t2 - t1) * 1e9
+    time_ns = (t2 - t1) * 1e6
     execution_times.append(time_ns)
-    print('time taken:', (t2 - t1) * 1e9, 'ns')
+    print('time taken:', (t2 - t1) * 1e6, 'ms')
 
-print('=========')
-print(q)
-print('=========')
-print(xq)
+# print('=========')
+# print(q)
+# print('=========')
+# print(xq)
 
 
 # find median of execution time
 median_time = sorted(execution_times)[len(execution_times) // 2]
-print('median time taken:', median_time, 'ns')
+
+# print median time with 2 decimal places
+print('median time taken:', f"{median_time:.2f}", 'ms')

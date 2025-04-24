@@ -10,6 +10,21 @@ import pdb
 import time
 import nvtx
 
+BENCHMARK_FREQUENCY = 100
+batch_size = 4
+dtype = torch.float32
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+
+model_type = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
+
+config_args = {
+    'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+    'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
+    'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
+    'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
+}[model_type]
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024 # max sequence length
@@ -117,25 +132,16 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
     freqs = freqs.to(dtype=torch.float32)
     # print('freqs.shape:', freqs.shape)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
-    freqs_cis = freqs_cis.to(device=device)
+    freqs_cis = freqs_cis.to(device=device,dtype=dtype)
     return freqs_cis
-
-model_type = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
-
-config_args = {
-    'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
-    'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
-    'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
-    'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
-}[model_type]
 
 config = GPTConfig(**config_args)
 
 freqs_cis = precompute_freqs_cis(
-    config.n_embd // config.n_head, config.block_size
+    config.n_embd // config.n_head, config.block_size, device=device
 )
 
-# print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
+print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
 # print(freqs_cis[1,:])
 
 # (batch_size, seq_len, n_head, head_dim)
@@ -144,17 +150,17 @@ freqs_cis = precompute_freqs_cis(
 # xk = torch.randn(2, 1024, 12, 64)
 
 base_tensor = torch.tensor([1, 2, 3, 4])
-total_elements = 2 * 1024 * 12 * 64
+total_elements = batch_size * config.block_size * config.n_head * (config.n_embd // config.n_head)
 
-xq = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 12, 64).to(dtype=torch.float32)
-xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 12, 64).to(dtype=torch.float32)
+xq = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
+xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
 
-# print(xq)
+print(xq)
 # exit(0)
 
 # create tensor with all ones
-# xq = torch.ones(2, 1024, 12, 64).to(dtype=torch.float32)
-# xk = torch.ones(2, 1024, 12, 64).to(dtype=torch.float32)
+# xq = torch.ones(2, 1024, 12, 64).to(dtype=dtype)
+# xk = torch.ones(2, 1024, 12, 64).to(dtype=dtype)
 
 # pdb.set_trace()
 
@@ -162,7 +168,7 @@ xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(2, 1024, 
 
 execution_times = []
 
-for i in range(50):
+for i in range(BENCHMARK_FREQUENCY):
     t1 = time.time()
     # execute without gradient tracking
     with torch.no_grad():
@@ -172,16 +178,16 @@ for i in range(50):
         nvtx.end_range(start)
     t2 = time.time()
     # print time in nano seconds
-    time_ns = (t2 - t1) * 1e9
+    time_ns = (t2 - t1) * 1e6
     execution_times.append(time_ns)
-    print('time taken:', (t2 - t1) * 1e9, 'ns')
+    # print('time taken:', (t2 - t1) * 1e6, 'ms')
     
+print(xq_out) 
     
 # find median of execution time
 median_time = sorted(execution_times)[len(execution_times) // 2]
-print('median time taken:', median_time, 'ns')
+print('median time taken:', f"{median_time:.2f}", 'ms')
 
 # pdb.set_trace()
 
 # print('=========')
-# print(xq_out) 

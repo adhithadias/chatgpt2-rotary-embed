@@ -17,6 +17,11 @@ void apply_rotary_cuda2(const torch::Tensor x,
   const torch::Tensor cos, const torch::Tensor sin,
   torch::Tensor out,
   const bool conj);
+
+void apply_rotary_cuda3(const torch::Tensor x,
+    const torch::Tensor cos, const torch::Tensor sin,
+    torch::Tensor out,
+    const bool conj);
  
 void apply_rotary(const torch::Tensor x1, const torch::Tensor x2,
                   const torch::Tensor cos, const torch::Tensor sin,
@@ -83,7 +88,50 @@ void apply_rotary2(const torch::Tensor x,
   // apply_rotary_cuda_orig(x1, x2, cos, sin, out1, out2, conj);
 }
 
+void apply_rotary3(const torch::Tensor x,
+  const torch::Tensor cos, const torch::Tensor sin,
+  torch::Tensor out,
+  const bool conj) {
+  CHECK_DEVICE(x); 
+  CHECK_DEVICE(cos); CHECK_DEVICE(sin);
+  CHECK_DEVICE(out);
+  TORCH_CHECK(cos.dtype() == sin.dtype());
+  TORCH_CHECK(x.dtype() == cos.dtype());
+  TORCH_CHECK(x.dtype() == out.dtype());
+  TORCH_CHECK(cos.sizes() == sin.sizes());
+
+  // if (x.is_contiguous()) {
+  // std::cout << "x is contiguous" << std::endl;
+  // }
+
+  // print data types of x, cos, sin, out
+  // std::cout << "x dtype: " << x.dtype() << std::endl;
+  // std::cout << "cos dtype: " << cos.dtype() << std::endl;
+  // std::cout << "sin dtype: " << sin.dtype() << std::endl;
+  // std::cout << "out dtype: " << out.dtype() << std::endl;
+
+  // std::cout << "x: " << x << std::endl;
+  // std::cout << "cos: " << cos << std::endl;
+  // std::cout << "sin: " << sin << std::endl;
+
+  // exit(0);
+
+  // std::cout << "cos is contiguous: " << cos.is_contiguous() << std::endl;
+  // std::cout << "sin is contiguous: " << sin.is_contiguous() << std::endl;
+
+  // Otherwise the kernel will be launched from cuda:0 device
+  at::cuda::CUDAGuard device_guard{x.device()};
+
+  apply_rotary_cuda3(x, cos, sin, out, conj);
+
+  // std::cout << "out: " << out << std::endl;
+  // exit(0);
+
+  // apply_rotary_cuda_orig(x1, x2, cos, sin, out1, out2, conj);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("apply_rotary", &apply_rotary, "Apply rotary embedding");
   m.def("apply_rotary2", &apply_rotary2, "Apply rotary embedding 2");
+  m.def("apply_rotary3", &apply_rotary3, "Apply rotary embedding 3");
 }

@@ -73,28 +73,33 @@
     if (idx >= N * 2) return;
 
     // Load bfloat16 values and convert to float for computation
-    float x1_val = __bfloat162float(x[idx]);
-    float x2_val = __bfloat162float(x[idx + 1]);
-    float cos_val = __bfloat162float(cos[cos_idx]);
-    float sin_val = __bfloat162float(sin[cos_idx]);
+    __nv_bfloat16 x1_val = x[idx];
+    __nv_bfloat16 x2_val = x[idx + 1];
+    __nv_bfloat16 cos_val = cos[cos_idx];
+    __nv_bfloat16 sin_val = sin[cos_idx];
+    // float x1_val = __bfloat162float(x[idx]);
+    // float x2_val = __bfloat162float(x[idx + 1]);
+    // float cos_val = __bfloat162float(cos[cos_idx]);
+    // float sin_val = __bfloat162float(sin[cos_idx]);
 
     // printf("idx: %lld, idx1: %lld, cos_idx: %lld, x1: %f, x2: %f, cos: %f, sin: %f\n", idx, idx1, cos_idx, x1_val, x2_val, cos_val, sin_val);
 
-    float out1_val, out2_val;
+    __nv_bfloat16 out1_val, out2_val;
 
     if (!conj) {
-    out1_val = x1_val * cos_val - x2_val * sin_val;
-    out2_val = x1_val * sin_val + x2_val * cos_val;
+        out1_val = x1_val * cos_val - x2_val * sin_val;
+        out2_val = x1_val * sin_val + x2_val * cos_val;
     } else {
-    out1_val = x1_val * cos_val + x2_val * sin_val;
-    out2_val = -x1_val * sin_val + x2_val * cos_val;
+        out1_val = x1_val * cos_val + x2_val * sin_val;
+        out2_val = -x1_val * sin_val + x2_val * cos_val;
     }
 
     // Convert results back to bfloat16 and store
-    out[idx] = __float2bfloat16(out1_val);
-    out[idx + 1] = __float2bfloat16(out2_val);
+    out[idx] = out1_val;
+    out[idx + 1] = out2_val;
 }
 
+#define BLOCK_SIZE 128
 
 
 // /*
@@ -229,8 +234,8 @@ void apply_rotary_cuda2(const torch::Tensor x,
     // std::cout << "work_per_thread: " << work_per_thread << std::endl;
 
     // std::cout << "Grid size: " << grid << std::endl;
-    // // // // std::cout << "Block size: " << block_work_size() << std::endl;
-    // // // std::cout << "Number of elements: " << numel << std::endl;
+    // // std::cout << "Block size: " << block_work_size() << std::endl;
+    // std::cout << "Number of elements: " << numel << std::endl;
     // std::cout << "Number of elements in cos: " << numel_cos << std::endl;
     // std::cout << "num_threads: " << num_threads() << std::endl;
     auto stream = at::cuda::getCurrentCUDAStream();
@@ -265,6 +270,247 @@ void apply_rotary_cuda2(const torch::Tensor x,
 
 
     // std::cout << "CUDA kernel launched successfully" << std::endl;
+}
+
+__global__ void rotary_kernelbf162(const __nv_bfloat16* x,
+    const __nv_bfloat16* cos, const __nv_bfloat16* sin,
+    __nv_bfloat16* out,
+    const int64_t N, const bool conj, const int32_t S, const int32_t H, const int32_t D) {
+
+    int64_t idx = (blockIdx.x * blockDim.x + threadIdx.x);
+
+    // int64_t idx2 = idx >> 1; // divide by 2
+    int64_t b = idx / (S * H * D);
+    int64_t idx1  = idx % (S*H*D);
+
+    int64_t s = idx1 / (H*D);
+    int64_t idx2 = idx1 % (H * D);
+    int64_t d = idx2 % D;
+    int64_t cos_idx = s * (D>>1) + d/2;
+
+    // idx = idx*2; // a single thread works on 2 elements
+
+    // define shared memory for cos and sin
+    // __shared__ float cos_sin_shared[BLOCK_SIZE];
+    // __shared__ float sin_shared[BLOCK_SIZE];
+    __shared__ __nv_bfloat16 x_shared[BLOCK_SIZE];
+
+    if (idx >= N) return;
+
+    // int64_t cossin_idx = (threadIdx.x % 2 == 0) ? (threadIdx.x >> 1) : ((BLOCK_SIZE >> 1) + (threadIdx.x >> 1));
+
+    // printf("idx: %lld, idx1: %lld, idx2: %lld, b: %lld, s: %lld, d: %lld, cos_idx: %lld, tid: %lld, cossin_idx: %lld\n", idx, idx1, idx2, b, s, d, cos_idx, threadIdx.x, cossin_idx);
+
+    // __syncthreads();
+
+    // cos_sin_shared[cossin_idx] = (threadIdx.x % 2 == 0) == 0 ? ( cos[cos_idx] ) : ( sin[cos_idx] );
+    x_shared[threadIdx.x] = x[idx];
+    __syncthreads();
+
+    // // Load cos and sin into shared memory
+    // if (threadIdx.x < BLOCK_SIZE) {
+    //     cos_shared[threadIdx.x] = cos[cos_idx];
+    //     sin_shared[threadIdx.x] = sin[cos_idx];
+    // }
+    // // Load x into shared memory
+    // x_shared[threadIdx.x*2] = x[idx];
+    // x_shared[threadIdx.x*2+1] = x[idx+1];
+    // __syncthreads();
+
+    // Use shared memory values for computation
+    __nv_bfloat16 x1_val = (threadIdx.x % 2 == 0) ? x_shared[threadIdx.x] : x_shared[threadIdx.x - 1];
+    __nv_bfloat16 x2_val = (threadIdx.x % 2 == 0) ? x_shared[threadIdx.x + 1] : x_shared[threadIdx.x];
+    __nv_bfloat16 cos_val = cos[cos_idx]; // cos_sin_shared[threadIdx.x >> 1];
+    __nv_bfloat16 sin_val = sin[cos_idx]; // cos_sin_shared[(threadIdx.x >> 1) + (BLOCK_SIZE >> 1)];
+
+    // printf("idx: %lld, idx1: %lld, cos_idx: %lld, x1: %f, x2: %f, cos: %f, sin: %f\n", idx, idx1, cos_idx, x1_val, x2_val, cos_val, sin_val);
+
+    // float x1_val = x[idx];
+    // float x2_val = x[idx+1];
+    // float cos_val = cos[cos_idx];
+    // float sin_val = sin[cos_idx];
+    __nv_bfloat16 out_val;
+
+    if (!conj) {
+        out_val = (threadIdx.x % 2 == 0) ? x1_val * cos_val - x2_val * sin_val : x1_val * sin_val + x2_val * cos_val;
+        // out1_val = x1_val * cos_val - x2_val * sin_val;
+        // out2_val = x1_val * sin_val + x2_val * cos_val;
+    } else {
+        out_val = (threadIdx.x % 2 == 0) ? x1_val * cos_val + x2_val * sin_val : -x1_val * sin_val + x2_val * cos_val;
+        // out1_val = x1_val * cos_val + x2_val * sin_val;
+        // out2_val = -x1_val * sin_val + x2_val * cos_val;
+    }
+    out[idx] = out_val;
+}
+
+__global__ void rotary_kernel2(const float* x,
+    const float* cos, const float* sin,
+    float* out,
+    const int64_t N, const bool conj, const int32_t S, const int32_t H, const int32_t D) {
+
+    int64_t idx = (blockIdx.x * blockDim.x + threadIdx.x);
+
+    // int64_t idx2 = idx >> 1; // divide by 2
+    int64_t b = idx / (S * H * D);
+    int64_t idx1  = idx % (S*H*D);
+
+    int64_t s = idx1 / (H*D);
+    int64_t idx2 = idx1 % (H * D);
+    int64_t d = idx2 % D;
+    int64_t cos_idx = s * (D>>1) + d/2;
+
+    // idx = idx*2; // a single thread works on 2 elements
+
+    // define shared memory for cos and sin
+    // __shared__ float cos_sin_shared[BLOCK_SIZE];
+    // __shared__ float sin_shared[BLOCK_SIZE];
+    __shared__ float x_shared[BLOCK_SIZE];
+
+    if (idx >= N) return;
+
+    // int64_t cossin_idx = (threadIdx.x % 2 == 0) ? (threadIdx.x >> 1) : ((BLOCK_SIZE >> 1) + (threadIdx.x >> 1));
+
+    // printf("idx: %lld, idx1: %lld, idx2: %lld, b: %lld, s: %lld, d: %lld, cos_idx: %lld, tid: %lld, cossin_idx: %lld\n", idx, idx1, idx2, b, s, d, cos_idx, threadIdx.x, cossin_idx);
+
+    // __syncthreads();
+
+    // cos_sin_shared[cossin_idx] = (threadIdx.x % 2 == 0) == 0 ? ( cos[cos_idx] ) : ( sin[cos_idx] );
+    x_shared[threadIdx.x] = x[idx];
+    __syncthreads();
+
+    // // Load cos and sin into shared memory
+    // if (threadIdx.x < BLOCK_SIZE) {
+    //     cos_shared[threadIdx.x] = cos[cos_idx];
+    //     sin_shared[threadIdx.x] = sin[cos_idx];
+    // }
+    // // Load x into shared memory
+    // x_shared[threadIdx.x*2] = x[idx];
+    // x_shared[threadIdx.x*2+1] = x[idx+1];
+    // __syncthreads();
+
+    // Use shared memory values for computation
+    float x1_val = (threadIdx.x % 2 == 0) ? x_shared[threadIdx.x] : x_shared[threadIdx.x - 1];
+    float x2_val = (threadIdx.x % 2 == 0) ? x_shared[threadIdx.x + 1] : x_shared[threadIdx.x];
+    float cos_val = cos[cos_idx]; // cos_sin_shared[threadIdx.x >> 1];
+    float sin_val = sin[cos_idx]; // cos_sin_shared[(threadIdx.x >> 1) + (BLOCK_SIZE >> 1)];
+
+    // printf("idx: %lld, idx1: %lld, cos_idx: %lld, x1: %f, x2: %f, cos: %f, sin: %f\n", idx, idx1, cos_idx, x1_val, x2_val, cos_val, sin_val);
+
+    // float x1_val = x[idx];
+    // float x2_val = x[idx+1];
+    // float cos_val = cos[cos_idx];
+    // float sin_val = sin[cos_idx];
+    float out_val;
+
+    if (!conj) {
+        out_val = (threadIdx.x % 2 == 0) ? x1_val * cos_val - x2_val * sin_val : x1_val * sin_val + x2_val * cos_val;
+        // out1_val = x1_val * cos_val - x2_val * sin_val;
+        // out2_val = x1_val * sin_val + x2_val * cos_val;
+    } else {
+        out_val = (threadIdx.x % 2 == 0) ? x1_val * cos_val + x2_val * sin_val : -x1_val * sin_val + x2_val * cos_val;
+        // out1_val = x1_val * cos_val + x2_val * sin_val;
+        // out2_val = -x1_val * sin_val + x2_val * cos_val;
+    }
+    out[idx] = out_val;
+}
+
+void apply_rotary_cuda3(const torch::Tensor x,
+    const torch::Tensor cos, const torch::Tensor sin,
+    torch::Tensor out,
+    const bool conj)
+{
+    // auto iter = at::TensorIteratorConfig()
+    // .add_output(out)
+    // .add_input(x)
+    // .add_input(cos)
+    // .add_input(sin)
+    // .check_all_same_dtype(false)
+    // .promote_inputs_to_common_dtype(false)
+    // .build();
+
+    const int num_inputs = 3;
+    const int num_outputs = 1;
+    // if (iter.is_contiguous()) {
+    //     auto input_calc = TrivialOffsetCalculator<num_inputs>();
+    //     auto output_calc = TrivialOffsetCalculator<num_outputs>();
+    //     std::cout << "Tensor is contiguous" << std::endl;
+    // } else {
+    //     auto input_calc = make_input_offset_calculator<num_inputs>(iter);
+    //     auto output_calc = make_output_offset_calculator<num_outputs>(iter);
+    //     std::cout << "Tensor is not contiguous" << std::endl;
+    // }
+
+    // check if x1 is contiguous
+    // if (x.is_contiguous()) {
+    //     std::cout << "x1 is contiguous" << std::endl;
+    //     std::cout << x << std::endl;
+    // } else {
+    //     std::cout << "x1 is not contiguous" << std::endl;
+    // }
+
+    // // // // print dimensions of x1 and cos
+    // // std::cout << "x1 dimensions: " << x1.sizes() << std::endl;
+    // // std::cout << "cos dimensions: " << cos.sizes() << std::endl;
+    // // std::cout << "out1 dimensions: " << out1.sizes() << std::endl;
+
+    // // // print datatype of x1, out1, and cos
+    // // std::cout << "x1 datatype: " << x1.dtype() << std::endl;
+    // // std::cout << "out1 datatype: " << out1.dtype() << std::endl;
+    // // std::cout << "cos datatype: " << cos.dtype() << std::endl;
+
+    int64_t numel = x.numel();
+    int64_t numel_cos = cos.numel();
+    int64_t N = numel;
+    // std::cout << "N: " << N << std::endl;
+    TORCH_INTERNAL_ASSERT(N > 0 && N <= std::numeric_limits<int32_t>::max());
+    auto num_threads_ = num_threads();
+    int64_t grid = (N + num_threads_ - 1) / num_threads_;
+    auto total_threads = grid * num_threads_;
+
+    int64_t work_per_thread = (N + total_threads - 1) / total_threads;
+
+    // std::cout << "N: " << N << std::endl;
+    // std::cout << "grid: " << grid << std::endl;
+    // std::cout << "num_threads_: " << num_threads_ << std::endl;
+    // std::cout << "work_per_thread: " << work_per_thread << std::endl;
+
+    // std::cout << "Grid size: " << grid << std::endl;
+    // // std::cout << "Block size: " << block_work_size() << std::endl;
+    // std::cout << "Number of elements: " << numel << std::endl;
+    // std::cout << "Number of elements in cos: " << numel_cos << std::endl;
+    // std::cout << "num_threads: " << num_threads() << std::endl;
+    auto stream = at::cuda::getCurrentCUDAStream();
+
+    // If x has [bz, S, H, D] shape then get S, H, D
+    const int32_t S = (int32_t) x.size(1);
+    const int32_t H = (int32_t) x.size(2);
+    const int32_t D = (int32_t) x.size(3);
+
+    // std::cout << x << std::endl;
+    // std::cout << cos << std::endl;
+    // std::cout << sin << std::endl;
+    // std::cout << out << std::endl;
+
+    // // Launch the kernel
+    if (x.dtype() == at::kBFloat16) {
+        //     // std::cout << "Launching kernel for bfloat16" << std::endl;
+        rotary_kernelbf162<<<grid, num_threads_, 0, stream>>>(
+        reinterpret_cast<const __nv_bfloat16*>(x.data_ptr<at::BFloat16>()), 
+        reinterpret_cast<const __nv_bfloat16*>(cos.data_ptr<at::BFloat16>()), 
+        reinterpret_cast<const __nv_bfloat16*>(sin.data_ptr<at::BFloat16>()),
+        reinterpret_cast<__nv_bfloat16*>(out.data_ptr<at::BFloat16>()), 
+        N, conj, S, H, D);
+    } else {
+        // std::cout << "Launching kernel for float" << std::endl;
+        rotary_kernel2<<<grid, num_threads_, 0, stream>>>(
+        x.data_ptr<float>(), 
+        cos.data_ptr<float>(), sin.data_ptr<float>(),
+        out.data_ptr<float>(), 
+        N, conj, S, H, D);
+    }
+
+
+// std::cout << "CUDA kernel launched successfully" << std::endl;
 }
 
 // */

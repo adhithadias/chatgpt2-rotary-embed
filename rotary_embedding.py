@@ -174,9 +174,72 @@ class ApplyRotaryEmb2(torch.autograd.Function):
         if not inplace and rotary_dim < headdim:
             dx[..., rotary_dim:].copy_(do[..., rotary_dim:])
         return dx, None, None, None, None
+    
+class ApplyRotaryEmb3(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, cos, sin, interleaved=False, inplace=False):
+        """
+            x: (batch_size, seqlen, nheads, headdim)
+            cos, sin: (seqlen, rotary_dim / 2)
+            interleaved: if True, rotate pairs of even and odd dimensions (GPT-J style) instead
+                of 1st half and 2nd half (GPT-NeoX style).
+        rotary_dim must be <= headdim
+        Apply rotary embedding to the first rotary_dim of x.
+        """
+        batch, seqlen, nheads, headdim = x.shape
+        rotary_seqlen, rotary_dim = cos.shape
+        rotary_dim *= 2
+        assert rotary_dim <= headdim
+        assert seqlen <= rotary_seqlen
+        assert sin.shape == (rotary_seqlen, rotary_dim // 2)
+        x = x[..., :rotary_dim]
+        out = torch.empty_like(x) if not inplace else x
+        # print('x.shape:', x.shape)
+        # print('x1.shape:', x1.shape)
+        # print('x2.shape:', x2.shape)
+        # print('cos shape:', cos[:seqlen].shape)
+        # print('cos[:seqlen].shape:', cos[:seqlen].shape)
+        # print('sin[:seqlen].shape:', sin[:seqlen].shape)
+        # print('o1.shape:', o1.shape)
+        # print('o2.shape:', o2.shape)
+        rotary_emb.apply_rotary3(
+            x,
+            cos,
+            sin,
+            out,
+            False,
+        )
+        # print('o1\n', out)
+        if not inplace and rotary_dim < headdim:
+            out[..., rotary_dim:].copy_(x[..., rotary_dim:])
+        ctx.save_for_backward(cos, sin)
+        ctx.interleaved = interleaved
+        ctx.inplace = inplace
+        return out if not inplace else x
+
+    @staticmethod
+    def backward(ctx, do):
+        cos, sin = ctx.saved_tensors
+        _, seqlen, _, headdim = do.shape
+        rotary_dim = cos.shape[-1]
+        rotary_dim *= 2
+        inplace = ctx.inplace
+        do_ro = do[..., :rotary_dim]
+        dx = torch.empty_like(do) if not inplace else do
+        rotary_emb.apply_rotary3(
+            do,
+            cos,
+            sin,
+            dx,
+            True,
+        )
+        if not inplace and rotary_dim < headdim:
+            dx[..., rotary_dim:].copy_(do[..., rotary_dim:])
+        return dx, None, None, None, None
 
 apply_rotary_emb_func = ApplyRotaryEmb.apply
 apply_rotary_emb_func2 = ApplyRotaryEmb2.apply
+apply_rotary_emb_func3 = ApplyRotaryEmb3.apply
 
 # def apply_rotary_emb_func(x, cos, sin, interleaved=False, inplace=False):
 #         """
