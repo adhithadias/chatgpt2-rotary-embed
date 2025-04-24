@@ -39,6 +39,9 @@ nsys profile -f true -o profile_reports/default_rope python test_llama_rotary_em
 
 nsys profile -f true -o profile_reports/custom_rope python test_tiny_llama_rotary_embedding.py
 
+# to view aggregate range summary
+nsys stats --force-export=true profile_reports/custom_rope.nsys-rep
+
 scp triton:/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/profile_reports/default_rope.nsys-rep ~/Downloads/ece695aih/project/
 
 scp triton:/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/profile_reports/custom_rope.nsys-rep ~/Downloads/ece695aih/project/
