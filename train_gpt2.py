@@ -132,12 +132,12 @@ class CausalSelfAttention(nn.Module):
         # q = apply_rotary_emb_func2(q, sin, cos, True, False)
         # k = apply_rotary_emb_func2(k, sin, cos, True, False)
         
-        q = apply_rotary_emb_func3(q, sin, cos, True, False)
-        k = apply_rotary_emb_func3(k, sin, cos, True, False)
+        # q = apply_rotary_emb_func3(q, sin, cos, True, False)
+        # k = apply_rotary_emb_func3(k, sin, cos, True, False)
         
-        # # triton implementation does not work because bfloat16 is not implemented
-        # q = apply_rotary_emb_triton(q, cos, sin, True, False)
-        # k = apply_rotary_emb_triton(k, cos, sin, True, False)
+        # triton implementation does not work because bfloat16 is not implemented
+        q = apply_rotary_emb_triton(q, cos, sin, True, False)
+        k = apply_rotary_emb_triton(k, cos, sin, True, False)
         
         # print('k', k.shape)
         # print('q', q.shape)
