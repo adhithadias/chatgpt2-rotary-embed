@@ -2,6 +2,7 @@ from typing import Tuple
 import torch
 from dataclasses import dataclass
 from rotary_embedding import apply_rotary_emb_func, apply_rotary_emb_func2, apply_rotary_emb_func3
+from rotary_embedding import apply_rotary_emb_triton
 import time
 import nvtx
 
@@ -132,22 +133,23 @@ for i in range(BENCHMARK_FREQUENCY):
     t1 = time.time()
     # execute without gradient tracking
     with torch.no_grad():
-        start = nvtx.start_range(message="custom_rope", color="blue")
+        # start = nvtx.start_range(message="custom_rope", color="blue")
         # xq = apply_rotary_emb_func(q, cos, sin, True, False)
         # xk = apply_rotary_emb_func(k, cos, sin, True, False)
         
-        xq = apply_rotary_emb_func3(q, cos, sin, True, False)
-        xk = apply_rotary_emb_func3(k, cos, sin, True, False)
+        xq = apply_rotary_emb_triton(q, cos, sin, True, False)
+        xk = apply_rotary_emb_triton(k, cos, sin, True, False)
         
         torch.cuda.synchronize()
-        nvtx.end_range(start)
+        # nvtx.end_range(start)
     # include cuda synchronize
     t2 = time.time()
     
     # print time in nano seconds
-    time_ns = (t2 - t1) * 1e6
-    execution_times.append(time_ns)
-    print('time taken:', (t2 - t1) * 1e6, 'ms')
+    time_ms = (t2 - t1) * 1e6
+    execution_times.append(time_ms)
+    print('time taken:', (t2 - t1) * 1e6, 'us')
+    # print(f"Time taken: {t2 - t1:.4f} seconds")
 
 # print('=========')
 # print(q)
