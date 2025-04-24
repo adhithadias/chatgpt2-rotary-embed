@@ -14,11 +14,7 @@ nvcc --version
 
 # install the correct version of pytorch that supports nvcc version of the system. I have V12.2.140 in my system and installing torch with cu121 seems to work.
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install packaging
-pip install ninja
-pip install wheel
-pip install nvtx
-pip install einops
+pip install packaging ninja wheel nvtx einops tiktoken
 
 # bypass ImportError: libc10.so: cannot open shared object file: No such file or directory. Needs for importing shared libraries such as libc10.so, libtorch.so, libtorch_cpu.so, etc
 # IMPORTANT: Set the path properly

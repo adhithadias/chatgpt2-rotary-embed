@@ -20,17 +20,17 @@ data_8 = data[data['b'] == 8]
 # Function to plot grouped bar plots with speedup
 def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =False):
     labels = data['s'].astype(str)  # Batch sizes as labels
-    default = data['default(ms)']
-    cuda1 = data['cuda1(ms)']
-    cuda2 = data['cuda2(ms)']
-    cuda3 = data['cuda3(ms)']
+    default = data['default(us)']
+    cuda1 = data['cuda1(us)']
+    cuda2 = data['cuda2(us)']
+    cuda3 = data['cuda3(us)']
     FLOPs = data['FLOPs']
     
     if throughput:
-        default = FLOPs / default * 10**3
-        cuda1 = FLOPs / cuda1 * 10**3
-        cuda2 = FLOPs / cuda2 * 10**3
-        cuda3 = FLOPs / cuda3 * 10**3
+        default = FLOPs / default * 10**6 / 10**9
+        cuda1 = FLOPs / cuda1 * 10**6 / 10**9
+        cuda2 = FLOPs / cuda2 * 10**6 / 10**9
+        cuda3 = FLOPs / cuda3 * 10**6 / 10**9
 
     # Calculate speedup over default
     if throughput:
@@ -61,10 +61,10 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
 
     ax1.set_xlabel('Seqence length (s)', fontsize=18)
     if throughput:
-        ax1.set_ylabel('Throughput (FLOPS)', fontsize=18)
+        ax1.set_ylabel('Throughput (GFLOPS)', fontsize=18)
     else:
         ax1.set_ylabel('Time (ms)', fontsize=18)
-    ax1.set_title(f"{title}, Geomean Speedup: {geomean_cuda3:.2f}", fontsize=22)
+    ax1.set_title(f"{title}, Geomean Speedup: {geomean_cuda2:.2f}", fontsize=22)
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, fontsize=18)
     ax1.tick_params(axis='y', labelsize=16)
@@ -80,8 +80,8 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     ax2.legend(loc='upper right', fontsize=14)
     
     # limit secondary y-axis to 0.9 to 1.3
-    ax2.set_ylim(0.9, 3.0)
-    ax2.set_yticks(np.arange(0.9, 3.1, 0.2))
+    ax2.set_ylim(0.8, 1.2)
+    ax2.set_yticks(np.arange(0.8, 1.3, 0.1))
     
     # set y ticks fontsize to 18
     ax2.tick_params(axis='y', labelsize=16)

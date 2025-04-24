@@ -6,7 +6,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 from typing import Tuple
 from rotary_embedding import apply_rotary_emb_func, \
-    apply_rotary_emb_func2, apply_rotary_emb_func3
+    apply_rotary_emb_func2, apply_rotary_emb_func3, \
+        apply_rotary_emb_triton
 
 # -----------------------------------------------------------------------------
 
@@ -133,6 +134,10 @@ class CausalSelfAttention(nn.Module):
         
         q = apply_rotary_emb_func3(q, sin, cos, True, False)
         k = apply_rotary_emb_func3(k, sin, cos, True, False)
+        
+        # # triton implementation does not work because bfloat16 is not implemented
+        # q = apply_rotary_emb_triton(q, cos, sin, True, False)
+        # k = apply_rotary_emb_triton(k, cos, sin, True, False)
         
         # print('k', k.shape)
         # print('q', q.shape)
@@ -460,7 +465,7 @@ model.to(device)
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 10
-max_steps = 50
+max_steps = 55
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
     if it < warmup_steps:
@@ -504,7 +509,7 @@ for step in range(max_steps):
     dt = t1 - t0 # time difference in seconds
     tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
     tokens_per_sec = tokens_processed / dt
-    print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+    print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}", flush=True)
 
 import sys; sys.exit(0)
 
