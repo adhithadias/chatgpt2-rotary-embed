@@ -24,12 +24,17 @@ def rotary_kernel(
     mask = offs_d < D               # Handle tail fragments when D is not a multiple of BLOCK_D
 
     
-    x_offset = b * stride_bs + s * stride_sh + h * stride_hd + offs_d   # flattened index
+    # x_offset = b * stride_bs + s * stride_sh + h * stride_hd + offs_d   # flattened index
+    x_offset = b * stride_bs + s * stride_sh + h * stride_hd   # flattened index
     # x = tl.load(x_ptr + x_offset, mask=mask)
 
     # Cos/sin are [S, D//2]
-    cos = tl.load(cos_ptr + s * (BLOCK_D//2) + offs_d, mask=mask)
-    sin = tl.load(sin_ptr + s * (BLOCK_D//2) + offs_d, mask=mask)
+    cos_offset = s * (D // 2) + offs_d
+    mask_half = offs_d < (D // 2)
+    cos = tl.load(cos_ptr + cos_offset, mask=mask_half, other=0.0)
+    sin = tl.load(sin_ptr + cos_offset, mask=mask_half, other=0.0)
+    # cos = tl.load(cos_ptr + s * (BLOCK_D//2) + offs_d, mask=mask)
+    # sin = tl.load(sin_ptr + s * (BLOCK_D//2) + offs_d, mask=mask)
 
     # x1 = x[::2]     # Even Values
     # x2 = x[1::2]    # Odd Values
@@ -50,12 +55,12 @@ def rotary_kernel(
     # sin = tl.load(sin_ptr + s * (D // 2) + offs, ...)  # shape: [BLOCK_D // 2]
 
     # Triton does not support complex numbers natively, so we'll have to use the real-img approach
-    if not conj:        # Forward pass
-        x_rotated_even = x1 * cos - x2 * sin
-        x_rotated_odd = x1 * sin + x2 * cos
-    else:               # Backward pass
-        x_rotated_even = x1 * cos + x2 * sin
-        x_rotated_odd = -x1 * sin + x2 * cos
+    # if not conj:        # Forward pass
+    x_rotated_even = x1 * cos - x2 * sin
+    x_rotated_odd = x1 * sin + x2 * cos
+    # else:               # Backward pass
+    #     x_rotated_even = x1 * cos + x2 * sin
+    #     x_rotated_odd = -x1 * sin + x2 * cos
 
     # # Interleave
     # out = tl.zeros([BLOCK_D], dtype=tl.float32)
@@ -77,18 +82,71 @@ def rotary_kernel(
     # tl.store(out_ptr + x_offset + offs_odd,  x_rotated_odd)
 
     # Store interleaved output
-    tl.store(store_ptr_even, x_rotated_even)
-    tl.store(store_ptr_odd,  x_rotated_odd)
+    mask_even = offs_even < D
+    mask_odd = offs_odd < D
+    tl.store(store_ptr_even, x_rotated_even, mask=mask_even)
+    tl.store(store_ptr_odd,  x_rotated_odd,  mask=mask_odd)
+
+    # tl.store(store_ptr_even, x_rotated_even)
+    # tl.store(store_ptr_odd,  x_rotated_odd)
 
 
     # tl.store(out_ptr + x_offset, out, mask=mask)
+
+
+# def rotary_kernel(
+#     x_ptr, cos_ptr, sin_ptr, out_ptr, conj,
+#     B, S, H, D,
+#     stride_bs, stride_sh, stride_hd,
+#     BLOCK_D: tl.constexpr
+# ):
+#     b = tl.program_id(0)
+#     s = tl.program_id(1)
+#     h = tl.program_id(2)
+
+#     x_offset = b * stride_bs + s * stride_sh + h * stride_hd
+
+#     offs_d = tl.arange(0, BLOCK_D)
+#     offs_even = 2 * offs_d
+#     offs_odd  = 2 * offs_d + 1
+
+#     # Mask for even/odd loads/stores
+#     mask_even = offs_even < D
+#     mask_odd = offs_odd < D
+
+#     # Load x1 (even) and x2 (odd)
+#     x1 = tl.load(x_ptr + x_offset + offs_even, mask=mask_even, other=0.0)
+#     x2 = tl.load(x_ptr + x_offset + offs_odd, mask=mask_odd, other=0.0)
+
+#     # Load cos/sin for this sequence position
+#     mask_rot = offs_d < (D // 2)
+#     cos = tl.load(cos_ptr + s * (D // 2) + offs_d, mask=mask_rot, other=0.0)
+#     sin = tl.load(sin_ptr + s * (D // 2) + offs_d, mask=mask_rot, other=0.0)
+
+#     # Apply rotation
+#     if not conj:
+#         x_rotated_even = x1 * cos - x2 * sin
+#         x_rotated_odd  = x1 * sin + x2 * cos
+#     else:
+#         x_rotated_even = x1 * cos + x2 * sin
+#         x_rotated_odd  = -x1 * sin + x2 * cos
+
+#     # Store back with masks
+#     tl.store(out_ptr + x_offset + offs_even, x_rotated_even, mask=mask_even)
+#     tl.store(out_ptr + x_offset + offs_odd,  x_rotated_odd,  mask=mask_odd)
 
 
 def apply_rotary(x, cos, sin, out=None, conj=False):
     B, S, H, D = x.shape
     if out is None:
         out = torch.empty_like(x)
+        out = out.contiguous()
     
+    # assert x.is_contiguous()
+    # assert cos.is_contiguous() and sin.is_contiguous()
+    # assert out.is_contiguous()
+    # assert x.device == cos.device == sin.device
+    # assert x.dtype == cos.dtype == sin.dtype
     grid = (B, S, H)
     rotary_kernel[grid](
         x, cos, sin, out, conj,
