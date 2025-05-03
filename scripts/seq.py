@@ -2,8 +2,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+dtype = 'float32'
+dtype = 'bfloat16'
+
 # Load the CSV file
 file_path = '/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/results/initial_seq.csv'
+if (dtype == 'bfloat16'):
+    file_path = '/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/results/initial_seq16.csv'
 data = pd.read_csv(file_path)
 
 # Split the 'config' column into separate columns for batch size (b) and sequence length (s)
@@ -89,6 +94,12 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     # limit secondary y-axis to 0.9 to 1.3
     ax2.set_ylim(0.3, 1.3)
     ax2.set_yticks(np.arange(0.3, 1.4, 0.1))
+    if dtype == 'float32':
+        ax2.set_ylim(0.3, 1.3)
+        ax2.set_yticks(np.arange(0.3, 1.4, 0.1))
+    else:
+        ax2.set_ylim(0.5, 5.5)
+        ax2.set_yticks(np.arange(0.5, 5.6, 0.5))
     
     # set y ticks fontsize to 18
     ax2.tick_params(axis='y', labelsize=16)
@@ -101,8 +112,15 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     plt.savefig(output_file)
     plt.show()
 
-# Plot for s=1024
-plot_grouped_bars_with_speedup(data_4, 'Performance and Speedup \nBatch Size=4', 'images/performance_speedup_b4.png', throughput=True)
+if dtype == 'float32':
+    # Plot for s=1024
+    plot_grouped_bars_with_speedup(data_4, f'Performance and Speedup {dtype} \nBatch Size=4', 'images/performance_speedup_b4.png', throughput=False)
 
-# Plot for s=2048
-plot_grouped_bars_with_speedup(data_8, 'Performance and Speedup \nBatch Size=8', 'images/performance_speedup_b8.png', throughput=True)
+    # Plot for s=2048
+    plot_grouped_bars_with_speedup(data_8, f'Performance and Speedup {dtype} \nBatch Size=8', 'images/performance_speedup_b8.png', throughput=False)
+else:
+    # Plot for s=1024
+    plot_grouped_bars_with_speedup(data_4, f'Performance and Speedup {dtype} \nBatch Size=4', 'images/performance_speedup_b4bf16.png', throughput=True)
+
+    # Plot for s=2048
+    plot_grouped_bars_with_speedup(data_8, f'Performance and Speedup {dtype} \nBatch Size=8', 'images/performance_speedup_b8bf16.png', throughput=True)
