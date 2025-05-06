@@ -2,6 +2,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+dtype = 'float32'
+dtype = 'bfloat16'
+
 # Load the CSV file
 file_path = '/local/scratch/a/dalwis/chatgpt2-rotary-embed/results/initial_bz.csv'
 data = pd.read_csv(file_path)
@@ -91,8 +94,12 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     ax2.legend(loc='lower right', fontsize=14)
     
     # limit secondary y-axis to 0.9 to 1.3
-    ax2.set_ylim(0.3, 1.3)
-    ax2.set_yticks(np.arange(0.3, 1.4, 0.1))
+    if dtype == 'float32':
+        ax2.set_ylim(0.3, 1.3)
+        ax2.set_yticks(np.arange(0.3, 1.4, 0.1))
+    else:
+        ax2.set_ylim(0.5, 5.5)
+        ax2.set_yticks(np.arange(0.5, 5.6, 0.5))
     
     # set y ticks fontsize to 18
     ax2.tick_params(axis='y', labelsize=16)
@@ -105,8 +112,15 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     plt.savefig(output_file)
     plt.show()
 
-# Plot for s=1024
-plot_grouped_bars_with_speedup(data_1024, 'Performance and Speedup \nSeqlen=1024', 'images/performance_speedup_s1024.png', throughput=True)
+if dtype == 'float32':
+    # Plot for s=1024
+    plot_grouped_bars_with_speedup(data_1024, f'Performance and Speedup {dtype} \nSeqlen=1024', 'images/performance_speedup_s1024.png', throughput=False)
 
-# Plot for s=2048
-plot_grouped_bars_with_speedup(data_2048, 'Performance and Speedup \nSeqlen=2048', 'images/performance_speedup_s2048.png', throughput=True)
+    # Plot for s=2048
+    plot_grouped_bars_with_speedup(data_2048, f'Performance and Speedup {dtype} \nSeqlen=2048', 'images/performance_speedup_s2048.png', throughput=False)
+else:
+    # Plot for s=1024
+    plot_grouped_bars_with_speedup(data_1024, f'Performance and Speedup {dtype} \nSeqlen=1024', 'images/performance_speedup_s1024bf16.png', throughput=True)
+
+    # Plot for s=2048
+    plot_grouped_bars_with_speedup(data_2048, f'Performance and Speedup {dtype} \nSeqlen=2048', 'images/performance_speedup_s2048bf16.png', throughput=True)

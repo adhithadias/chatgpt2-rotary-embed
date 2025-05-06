@@ -8,10 +8,7 @@ from torch.nn import functional as F
 from typing import Tuple
 from rotary_embedding import apply_rotary_emb_func, \
     apply_rotary_emb_func2, apply_rotary_emb_func3, \
-        apply_rotary_emb_triton
-import nvtx
-
-enable_nvtx = False
+        apply_rotary_emb_triton, apply_rotary_emb_triton2
 
 # -----------------------------------------------------------------------------
 
@@ -114,7 +111,7 @@ class CausalSelfAttention(nn.Module):
                                      .view(1, 1, config.block_size, config.block_size))
         self.rotary = RotaryEmbedding(config.n_embd)
 
-    def forward(self, x, freqs_cis, sin=None, cos=None):
+    def forward(self, x, theta):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
@@ -125,17 +122,12 @@ class CausalSelfAttention(nn.Module):
         q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head)
         q = q.view(B, T, self.n_head, C // self.n_head)
-        if enable_nvtx:
-            torch.cuda.synchronize()
-            nvtx.end_range(start)
         
         # print('k', k.shape)
         # print('q', q.shape)
-        if enable_nvtx:
-            start = nvtx.start_range(message="rope", color="blue")
         
         # apply rotary embedding to the keys
-        q, k = apply_rotary_emb(q, k, freqs_cis)
+        # q, k = apply_rotary_emb(q, k, freqs_cis)
         
         # q = apply_rotary_emb_func(q, sin, cos, True, False)
         # k = apply_rotary_emb_func(k, sin, cos, True, False)
@@ -148,16 +140,16 @@ class CausalSelfAttention(nn.Module):
         
         # triton implementation
         start = nvtx.start_range(message="rotary_emb", color="cyan")
-        q = apply_rotary_emb_triton(q, cos, sin, True, False)
-        k = apply_rotary_emb_triton(k, cos, sin, True, False)
+        # q = apply_rotary_emb_triton(q, cos, sin, True, False)
+        # k = apply_rotary_emb_triton(k, cos, sin, True, False)
+        q = apply_rotary_emb_triton2(q, theta, True, False)
+        k = apply_rotary_emb_triton2(k, theta, True, False)
         nvtx.end_range(start)
         
         # print('k', k.shape)
         # print('q', q.shape)
         # exit(0)
                     
-        if enable_nvtx:
-            start = nvtx.start_range(message="fsdpa", color="blue")
         k = k.transpose(1, 2) # (B, nh, T, hs)
         q = q.transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -168,13 +160,6 @@ class CausalSelfAttention(nn.Module):
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # flash attention
         nvtx.end_range(start)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-        
-        if enable_nvtx:
-            torch.cuda.synchronize()
-            nvtx.end_range(start)
-        
-        if enable_nvtx:
-            start = nvtx.start_range(message="output_proj", color="blue")
         # output projection
         start = nvtx.start_range(message="_proj", color="blue")
         y = self.c_proj(y)
@@ -205,13 +190,13 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
 
-    def forward(self, x, freqs_cis, sin=None, cos=None):
+    def forward(self, x, theta):
         # NVTX seperately
         start = nvtx.start_range(message="layer_norm_1", color="blue")
         ln1 = self.ln_1(x)
         nvtx.end_range(start)
         # start = nvtx.start_range(message="causal_attn", color="orange")
-        x = x + self.attn(ln1, freqs_cis, sin, cos)
+        x = x + self.attn(ln1, theta)
         # nvtx.end_range(start)
         start = nvtx.start_range(message="layer_norm_2", color="green")
         ln2 = self.ln_2(x)
@@ -246,7 +231,7 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
     freqs_cis = freqs_cis.to(device=device)
     return freqs_cis
 
-RoPECache = Tuple[torch.Tensor, torch.Tensor]
+RoPECache = Tuple[torch.Tensor]
 def build_rope_cache(
     seq_len: int, n_elem: int, dtype: torch.dtype, device: torch.device, base: int = 10000, condense_ratio: int = 1
 ) -> RoPECache:
@@ -263,26 +248,32 @@ def build_rope_cache(
     # print('theta:', theta)
 
     # Create position indexes `[0, 1, ..., seq_len - 1]`
-    seq_idx = torch.arange(seq_len, device=device) / condense_ratio
+    # seq_idx = torch.arange(seq_len, device=device) / condense_ratio
     # print('seq_idx.shape:', seq_idx.shape)
 
     # Calculate the product of position index and $\theta_i$
-    idx_theta = torch.outer(seq_idx, theta)
+    # idx_theta = torch.outer(seq_idx, theta)
     # print('idx_theta.shape:', idx_theta.shape)
 
-    cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
+    # cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
     
     # print('cos.dtype:', cos.dtype)
+    print('theta.dtype:', theta.dtype)
 
     # added by peiyuan to ensure same data type with q, k, to use fused rotary embedding
+    # if dtype == torch.bfloat16:
+    #     return cos.bfloat16(), sin.bfloat16()
     if dtype == torch.bfloat16:
-        return cos.bfloat16(), sin.bfloat16()
+        return theta.bfloat16()
     # this is to mimic the behaviour of complex32, else we will get different results
+    # if dtype in (torch.float16, torch.bfloat16, torch.int8):
+    #     return cos.half(), sin.half()
     if dtype in (torch.float16, torch.bfloat16, torch.int8):
-        return cos.half(), sin.half()
+        return theta.half()
     
     # print('cos.dtype:', cos.dtype)
-    return cos, sin
+    return theta
+
 
 @dataclass
 class GPTConfig:
@@ -338,16 +329,16 @@ class GPT(nn.Module):
                 self.config.n_embd // self.config.n_head, T
             )
             self.freqs_cis = self.freqs_cis.to(device=idx.device)
-            self.cos, self.sin = build_rope_cache(
+            self.theta = build_rope_cache(
                 seq_len = T, 
                 n_elem = int(self.config.n_embd // self.config.n_head),
                 dtype = torch.bfloat16,
                 device = idx.device,
                 condense_ratio = 1,
             )
-            print('cos', self.cos.shape)
-            print('sin', self.sin.shape)
-            print('freqs_cis', self.freqs_cis.shape)
+            # print('cos', self.cos.shape)
+            # print('sin', self.sin.shape)
+            # print('freqs_cis', self.freqs_cis.shape)
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
         nvtx.end_range(start)
         # forward the token and posisition embeddings
@@ -357,34 +348,18 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
         nvtx.end_range(start)
         x = tok_emb
-        if enable_nvtx:
-            torch.cuda.synchronize()
-            nvtx.end_range(start)
         # x = tok_emb + pos_emb
         # forward the blocks of the transformer
         start = nvtx.start_range(message="transformer_blocks", color="orange")
         for block in self.transformer.h:
-            x = block(x, freqs_cis = self.freqs_cis, sin=self.sin, cos=self.cos)
+            x = block(x, self.theta)
         nvtx.end_range(start)
         # forward the final layernorm and the classifier
-        if enable_nvtx:
-            start = nvtx.start_range(message="layer-norm-final", color="blue")
         x = self.transformer.ln_f(x)
-        if enable_nvtx:
-            torch.cuda.synchronize()
-            nvtx.end_range(start)
-            start = nvtx.start_range(message="lm-head", color="blue")
         logits = self.lm_head(x) # (B, T, vocab_size)
-        if enable_nvtx:
-            torch.cuda.synchronize()
-            nvtx.end_range(start)
-            start = nvtx.start_range(message="loss", color="blue")
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-        if enable_nvtx:
-            torch.cuda.synchronize()
-            nvtx.end_range(start)
         return logits, loss
 
     @classmethod
@@ -524,7 +499,7 @@ model.to(device)
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 10
-max_steps = 25
+max_steps = 55
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
     if it < warmup_steps:

@@ -2,6 +2,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+dtype = 'float32'
+dtype = 'bfloat16'
+
 # Load the CSV file
 file_path = '/local/scratch/a/dalwis/chatgpt2-rotary-embed/results/initial_seq.csv'
 data = pd.read_csv(file_path)
@@ -108,8 +111,15 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     plt.savefig(output_file)
     plt.show()
 
-# Plot for s=1024
-plot_grouped_bars_with_speedup(data_4, 'Performance and Speedup \nBatch Size=4', 'images/performance_speedup_b4.png', throughput=True)
+if dtype == 'float32':
+    # Plot for s=1024
+    plot_grouped_bars_with_speedup(data_4, f'Performance and Speedup {dtype} \nBatch Size=4', 'images/performance_speedup_b4.png', throughput=False)
 
-# Plot for s=2048
-plot_grouped_bars_with_speedup(data_8, 'Performance and Speedup \nBatch Size=8', 'images/performance_speedup_b8.png', throughput=True)
+    # Plot for s=2048
+    plot_grouped_bars_with_speedup(data_8, f'Performance and Speedup {dtype} \nBatch Size=8', 'images/performance_speedup_b8.png', throughput=False)
+else:
+    # Plot for s=1024
+    plot_grouped_bars_with_speedup(data_4, f'Performance and Speedup {dtype} \nBatch Size=4', 'images/performance_speedup_b4bf16.png', throughput=True)
+
+    # Plot for s=2048
+    plot_grouped_bars_with_speedup(data_8, f'Performance and Speedup {dtype} \nBatch Size=8', 'images/performance_speedup_b8bf16.png', throughput=True)

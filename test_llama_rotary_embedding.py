@@ -112,7 +112,11 @@ def apply_rotary_emb(
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
+def precompute_freqs_cis(
+    dim: int, end: int, 
+    theta: float = 10000.0, 
+    device=None,
+    dtype=torch.bfloat16,
 ) -> torch.Tensor:
     """
     Precompute the frequency tensor for complex exponentials (cis) with given dimensions.
@@ -148,10 +152,13 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
 config = GPTConfig(**config_args)
 
 freqs_cis = precompute_freqs_cis(
-    config.n_embd // config.n_head, config.block_size, device=device
+    config.n_embd // config.n_head, 
+    block_size, 
+    device=device,
+    dtype=dtype,
 )
 
-print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
+# print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
 # print(freqs_cis[1,:])
 
 # (batch_size, seq_len, n_head, head_dim)
@@ -160,11 +167,12 @@ print(freqs_cis.shape)  # Expected output: torch.Size([1024, 64])
 # xk = torch.randn(2, 1024, 12, 64)
 
 base_tensor = torch.tensor([1, 2, 3, 4])
-total_elements = batch_size * config.block_size * config.n_head * (config.n_embd // config.n_head)
+total_elements = batch_size * block_size * config.n_head * (config.n_embd // config.n_head)
 
-xq = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
-xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
+xq = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
+xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
 
+# print(xq)
 # print(xq)
 # exit(0)
 
@@ -192,6 +200,7 @@ for i in range(BENCHMARK_FREQUENCY):
     execution_times.append(time_ns)
     # print('time taken:', (t2 - t1) * 1e6, 'ms')
     
+# print(xq_out) 
 # print(xq_out) 
     
 # find median of execution time

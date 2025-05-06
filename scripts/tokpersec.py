@@ -16,10 +16,11 @@ def extract_data(filepath):
 
 # Filepaths
 files = {
-    "baseline": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/baseline.txt",
-    "cuda1": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda1.txt",
-    "cuda2": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda2.txt",
-    "cuda3": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda3.txt",
+    "Baseline": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/baseline.txt",
+    "CUDA1": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda1.txt",
+    "CUDA2": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda2.txt",
+    "CUDA3": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/cuda3.txt",
+    "Triton": "/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/logs/triton.txt",
 }
 
 # Extract data from each file
@@ -33,12 +34,13 @@ for label, filepath in files.items():
     data[label] = {"steps": steps, "tok_sec": tok_sec, "median": tok_sec_median}
     
 # divide median values by baseline median value
-baseline_median = data["baseline"]["median"]
+baseline_median = data["Baseline"]["median"]
 for label in data:
     data[label]["speedup"] = data[label]["median"] / baseline_median
     
 print("Speedup values:")
-
+for label in data:
+    print(f"{label}: {data[label]['speedup']:.4f}x")
 
 # Plotting
 plt.figure(figsize=(10, 6))

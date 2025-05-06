@@ -5,6 +5,7 @@ from rotary_embedding import apply_rotary_emb_func2
 # from rotary_embedding import apply_rotary_emb_triton
 import time
 import nvtx
+import sys
 
 import argparse
 
@@ -102,7 +103,7 @@ if torch.cuda.is_available():
 config = GPTConfig(**config_args)
 
 sin, cos = build_rope_cache(
-    seq_len=config.block_size,
+    seq_len=block_size,
     n_elem=int(config.rotary_percentage * config.n_embd // config.n_head),
     dtype=dtype,
     device=device,
@@ -118,6 +119,7 @@ sin, cos = build_rope_cache(
 # )
 
 # print('theta shape', theta.shape)  # Expected output: torch.Size([1024, 64])
+
 # print(sin[1,:])
 # print(cos.shape)  # Expected output: torch.Size([1024, 64])
 # print(cos[1,:])
@@ -138,10 +140,10 @@ if torch.cuda.is_available():
 # print('sin\n', sin)
 
 base_tensor = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
-total_elements = batch_size * config.block_size * config.n_head * (config.n_embd // config.n_head)
+total_elements = batch_size * block_size * config.n_head * (config.n_embd // config.n_head)
 
-q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
-k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
+q = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
+k = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, block_size, config.n_head, (config.n_embd // config.n_head)).to(dtype=dtype, device=device)
 
 # print('q:\n', q)
 
@@ -162,7 +164,7 @@ for i in range(BENCHMARK_FREQUENCY):
         
         xq = apply_rotary_emb_func2(q, cos, sin, True, False)
         xk = apply_rotary_emb_func2(k, cos, sin, True, False)
-        
+      
         # xq = apply_rotary_emb_triton(q, cos, sin, True, False)
         # xk = apply_rotary_emb_triton(k, cos, sin, True, False)
         
@@ -187,4 +189,5 @@ for i in range(BENCHMARK_FREQUENCY):
 median_time = sorted(execution_times)[len(execution_times) // 2]
 
 # print median time with 2 decimal places
-print('median time taken:', f"{median_time:.2f}", 'us')
+# print('median time taken:', f"{median_time:.2f}", 'us')
+print(f"{median_time:.2f}")
