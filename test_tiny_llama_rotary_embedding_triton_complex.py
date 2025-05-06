@@ -1,8 +1,7 @@
 from typing import Tuple
 import torch
 from dataclasses import dataclass
-from rotary_embedding import apply_rotary_emb_func2
-# from rotary_embedding import apply_rotary_emb_triton
+from rotary_embedding import apply_rotary_emb_triton2
 import time
 import nvtx
 
@@ -18,7 +17,7 @@ batch_size = args.batch_size
 
 
 BENCHMARK_FREQUENCY = 100
-# batch_size = 1
+# batch_size = 32
 
 # dtype = torch.float32
 dtype = torch.bfloat16
@@ -41,8 +40,7 @@ class GPTConfig:
     n_embd: int = 768 # embedding dimension
     rotary_percentage: float = 1.0 # percentage of rotary embedding
 
-RoPECache = Tuple[torch.Tensor, torch.Tensor]
-
+RoPECache = Tuple[torch.Tensor]
 def build_rope_cache(
     seq_len: int, n_elem: int, dtype: torch.dtype, device: torch.device, base: int = 10000, condense_ratio: int = 1
 ) -> RoPECache:
@@ -60,31 +58,28 @@ def build_rope_cache(
 
     # Create position indexes `[0, 1, ..., seq_len - 1]`
     seq_idx = torch.arange(seq_len, device=device) / condense_ratio
-    # print('seq_idx.shape:', seq_idx.shape)
 
     # Calculate the product of position index and $\theta_i$
     idx_theta = torch.outer(seq_idx, theta)
-    print('idx_theta.shape:', idx_theta.shape)
 
-    cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
-    
-    print('cos.dtype:', cos.dtype)
-    # print('theta.dtype:', theta.dtype)
-
-    # added by peiyuan to ensure same data type with q, k, to use fused rotary embedding
-    if dtype == torch.bfloat16:
-        return cos.bfloat16(), sin.bfloat16()
-    # if dtype == torch.bfloat16:
-    #     return theta.bfloat16()
-    # this is to mimic the behaviour of complex32, else we will get different results
-    if dtype in (torch.float16, torch.bfloat16, torch.int8):
-        return cos.half(), sin.half()
-    # if dtype in (torch.float16, torch.bfloat16, torch.int8):
-    #     return theta.half()
+    # cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
     
     # print('cos.dtype:', cos.dtype)
-    # return theta
-    return cos, sin
+    print('idx_theta.dtype:', idx_theta.dtype)
+
+    # added by peiyuan to ensure same data type with q, k, to use fused rotary embedding
+    # if dtype == torch.bfloat16:
+    #     return cos.bfloat16(), sin.bfloat16()
+    if dtype == torch.bfloat16:
+        return idx_theta.bfloat16()
+    # this is to mimic the behaviour of complex32, else we will get different results
+    # if dtype in (torch.float16, torch.bfloat16, torch.int8):
+    #     return cos.half(), sin.half()
+    if dtype in (torch.float16, torch.bfloat16, torch.int8):
+        return idx_theta.half()
+    
+    # print('cos.dtype:', cos.dtype)
+    return idx_theta
 
 
 # def build_rope_cache(self, idx: torch.Tensor) -> RoPECache:
@@ -101,7 +96,7 @@ if torch.cuda.is_available():
 
 config = GPTConfig(**config_args)
 
-sin, cos = build_rope_cache(
+theta = build_rope_cache(
     seq_len=config.block_size,
     n_elem=int(config.rotary_percentage * config.n_embd // config.n_head),
     dtype=dtype,
@@ -160,11 +155,11 @@ for i in range(BENCHMARK_FREQUENCY):
     with torch.no_grad():
         # start = nvtx.start_range(message="custom_rope", color="blue")
         
-        xq = apply_rotary_emb_func2(q, cos, sin, True, False)
-        xk = apply_rotary_emb_func2(k, cos, sin, True, False)
-        
-        # xq = apply_rotary_emb_triton(q, cos, sin, True, False)
-        # xk = apply_rotary_emb_triton(k, cos, sin, True, False)
+        # xq = apply_rotary_emb_func3(q, cos, sin, True, False)
+        # xk = apply_rotary_emb_func3(k, cos, sin, True, False)
+
+        xq = apply_rotary_emb_triton2(q, theta, True, False)
+        xk = apply_rotary_emb_triton2(k, theta, True, False)
         
         torch.cuda.synchronize()
         # nvtx.end_range(start)

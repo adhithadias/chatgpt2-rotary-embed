@@ -10,9 +10,19 @@ import pdb
 import time
 import nvtx
 
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--batch_size', type=int, required=True)
+parser.add_argument('--block_size', type=int, required=True)
+args = parser.parse_args()
+
+batch_size = args.batch_size
+# block_size = args.block_size
+
 BENCHMARK_FREQUENCY = 100
-batch_size = 1
-dtype = torch.float32
+# batch_size = 8
+dtype = torch.bfloat16
 if torch.cuda.is_available():
     device = torch.device('cuda')
 
@@ -27,7 +37,7 @@ config_args = {
 
 @dataclass
 class GPTConfig:
-    block_size: int = 2048 # max sequence length
+    block_size: int = args.block_size # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
@@ -155,7 +165,7 @@ total_elements = batch_size * config.block_size * config.n_head * (config.n_embd
 xq = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
 xk = base_tensor.repeat(total_elements // base_tensor.numel()).reshape(batch_size, config.block_size, config.n_head, config.n_embd // config.n_head).to(dtype=dtype, device=device)
 
-print(xq)
+# print(xq)
 # exit(0)
 
 # create tensor with all ones
@@ -182,11 +192,11 @@ for i in range(BENCHMARK_FREQUENCY):
     execution_times.append(time_ns)
     # print('time taken:', (t2 - t1) * 1e6, 'ms')
     
-print(xq_out) 
+# print(xq_out) 
     
 # find median of execution time
 median_time = sorted(execution_times)[len(execution_times) // 2]
-print('median time taken:', f"{median_time:.2f}", 'ms')
+print('median time taken:', f"{median_time:.2f}", 'us')
 
 # pdb.set_trace()
 
