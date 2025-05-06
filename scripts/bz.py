@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Load the CSV file
-file_path = '/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/results/initial_bz.csv'
+file_path = '/local/scratch/a/dalwis/chatgpt2-rotary-embed/results/initial_bz.csv'
 data = pd.read_csv(file_path)
 
 # Split the 'config' column into separate columns for batch size (b) and sequence length (s)
