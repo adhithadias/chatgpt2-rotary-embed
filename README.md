@@ -13,12 +13,12 @@ deactivate
 nvcc --version
 
 # install the correct version of pytorch that supports nvcc version of the system. I have V12.2.140 in my system and installing torch with cu121 seems to work.
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 pip install packaging ninja wheel nvtx einops tiktoken
 
 # bypass ImportError: libc10.so: cannot open shared object file: No such file or directory. Needs for importing shared libraries such as libc10.so, libtorch.so, libtorch_cpu.so, etc
 # IMPORTANT: Set the path properly
-export LD_LIBRARY_PATH="/home/min/a/$USER/scratch-space/workspace/chatgpt2-rotary-embed/.venv/lib/python3.10/site-packages/torch/lib/:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/local/scratch/a/dalwis/chatgpt2-rotary-embed/.venv/lib/python3.10/site-packages/torch/lib/:$LD_LIBRARY_PATH"
 
 cd rotary
 pip uninstall rotary_emb
