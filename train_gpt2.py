@@ -1,4 +1,5 @@
 import math
+import nvtx
 import inspect
 from dataclasses import dataclass
 import torch
@@ -115,7 +116,9 @@ class CausalSelfAttention(nn.Module):
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
         # e.g. in GPT-2 (124M), n_head=12, hs=64, so nh*hs=C=768 channels in the Transformer
+        start = nvtx.start_range(message="c_attn", color="purple")
         qkv = self.c_attn(x)
+        nvtx.end_range(start)
         q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head)
         q = q.view(B, T, self.n_head, C // self.n_head)
@@ -135,9 +138,11 @@ class CausalSelfAttention(nn.Module):
         # q = apply_rotary_emb_func3(q, sin, cos, True, False)
         # k = apply_rotary_emb_func3(k, sin, cos, True, False)
         
-        # triton implementation does not work because bfloat16 is not implemented
+        # triton implementation
+        start = nvtx.start_range(message="rotary_emb", color="cyan")
         q = apply_rotary_emb_triton(q, cos, sin, True, False)
         k = apply_rotary_emb_triton(k, cos, sin, True, False)
+        nvtx.end_range(start)
         
         # print('k', k.shape)
         # print('q', q.shape)
@@ -149,10 +154,14 @@ class CausalSelfAttention(nn.Module):
         
         # apply rotary embedding to the queries
         
+        start = nvtx.start_range(message="flash_attention", color="yellow")
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # flash attention
+        nvtx.end_range(start)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
         # output projection
+        start = nvtx.start_range(message="_proj", color="blue")
         y = self.c_proj(y)
+        nvtx.end_range(start)
         return y
 
 class MLP(nn.Module):
@@ -180,8 +189,19 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x, freqs_cis, sin=None, cos=None):
-        x = x + self.attn(self.ln_1(x), freqs_cis, sin, cos)
-        x = x + self.mlp(self.ln_2(x))
+        # NVTX seperately
+        start = nvtx.start_range(message="layer_norm_1", color="blue")
+        ln1 = self.ln_1(x)
+        nvtx.end_range(start)
+        # start = nvtx.start_range(message="causal_attn", color="orange")
+        x = x + self.attn(ln1, freqs_cis, sin, cos)
+        # nvtx.end_range(start)
+        start = nvtx.start_range(message="layer_norm_2", color="green")
+        ln2 = self.ln_2(x)
+        nvtx.end_range(start)
+        start = nvtx.start_range(message="mlp", color="red")
+        x = x + self.mlp(ln2)
+        nvtx.end_range(start)
         return x
     
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device=None
@@ -295,6 +315,7 @@ class GPT(nn.Module):
         # idx is of shape (B, T)
         B, T = idx.size()
         # print('idx', idx.shape)
+        start = nvtx.start_range(message="other", color="blue")
         if self.freqs_cis is None or self.freqs_cis.shape[0] != T:
             self.freqs_cis = precompute_freqs_cis(
                 self.config.n_embd // self.config.n_head, T
@@ -311,15 +332,20 @@ class GPT(nn.Module):
             print('sin', self.sin.shape)
             print('freqs_cis', self.freqs_cis.shape)
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
+        nvtx.end_range(start)
         # forward the token and posisition embeddings
         # pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
         # pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
+        start = nvtx.start_range(message="token_embedding", color="purple")
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
+        nvtx.end_range(start)
         x = tok_emb
         # x = tok_emb + pos_emb
         # forward the blocks of the transformer
+        start = nvtx.start_range(message="transformer_blocks", color="orange")
         for block in self.transformer.h:
             x = block(x, freqs_cis = self.freqs_cis, sin=self.sin, cos=self.cos)
+        nvtx.end_range(start)
         # forward the final layernorm and the classifier
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
