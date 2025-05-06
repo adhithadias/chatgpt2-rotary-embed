@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Load the CSV file
-file_path = '/home/min/a/kadhitha/scratch-space/workspace/chatgpt2-rotary-embed/results/initial_seq.csv'
+file_path = '/local/scratch/a/dalwis/chatgpt2-rotary-embed/results/initial_seq.csv'
 data = pd.read_csv(file_path)
 
 # Split the 'config' column into separate columns for batch size (b) and sequence length (s)
@@ -24,7 +24,8 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     cuda1 = data['cuda1(us)']
     cuda2 = data['cuda2(us)']
     cuda3 = data['cuda3(us)']
-    triton = data['triton(us)']
+    triton1 = data['triton1(us)']
+    triton2 = data['triton2(us)']
     FLOPs = data['FLOPs']
     
     if throughput:
@@ -32,18 +33,21 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
         cuda1 = FLOPs / cuda1 * 10**6 / 10**9
         cuda2 = FLOPs / cuda2 * 10**6 / 10**9
         cuda3 = FLOPs / cuda3 * 10**6 / 10**9
-        triton = FLOPs / triton * 10**6 / 10**9
+        triton1 = FLOPs / triton1 * 10**6 / 10**9
+        triton2 = FLOPs / triton2 * 10**6 / 10**9
 
     # Calculate speedup over default
     if throughput:
         speedup_cuda1 = cuda1 / default 
         speedup_cuda2 = cuda2 / default
         speedup_cuda3 = cuda3 / default
-        triton_speedup = triton / default
+        triton_speedup1 = triton1 / default
+        triton_speedup2 = triton2 / default
         geomean_cuda1 = np.exp(np.mean(np.log(speedup_cuda1)))
         geomean_cuda2 = np.exp(np.mean(np.log(speedup_cuda2)))
         geomean_cuda3 = np.exp(np.mean(np.log(speedup_cuda3)))
-        geomean_triton = np.exp(np.mean(np.log(triton_speedup)))
+        geomean_triton1 = np.exp(np.mean(np.log(triton_speedup1)))
+        geomean_triton2 = np.exp(np.mean(np.log(triton_speedup2)))
     else:
         speedup_cuda1 = default / cuda1
         speedup_cuda2 = default / cuda2
@@ -51,7 +55,8 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
         geomean_cuda1 = np.exp(np.mean(np.log(speedup_cuda1)))
         geomean_cuda2 = np.exp(np.mean(np.log(speedup_cuda2)))
         geomean_cuda3 = np.exp(np.mean(np.log(speedup_cuda3)))
-        geomean_triton = np.exp(np.mean(np.log(triton_speedup)))
+        geomean_triton1 = np.exp(np.mean(np.log(triton_speedup1)))
+        geomean_triton2 = np.exp(np.mean(np.log(triton_speedup2)))
 
     x = np.arange(len(labels))  # Label locations
     width = 0.15  # Width of the bars
@@ -63,14 +68,15 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     ax1.bar(x - 1*width, cuda1, width, label='CUDA1', color='lightcoral')
     ax1.bar(x + 0*width, cuda2, width, label='CUDA2', color='lightgreen')
     ax1.bar(x + 1*width, cuda3, width, label='CUDA3', color='violet')
-    ax1.bar(x + 2*width, triton, width, label='Triton', color='lightgray')
+    ax1.bar(x + 2*width, triton1, width, label='Triton1', color='lightgray')
+    ax1.bar(x + 3*width, triton2, width, label='Triton2', color='lightsalmon')
 
     ax1.set_xlabel('Seqence length (s)', fontsize=18)
     if throughput:
         ax1.set_ylabel('Throughput (GFLOPS)', fontsize=18)
     else:
         ax1.set_ylabel('Time (ms)', fontsize=18)
-    ax1.set_title(f"{title}, GM CUDA2: {geomean_cuda2:.2f}, GM Triton: {geomean_triton:.2f}", fontsize=22)
+    ax1.set_title(f"{title}, GM CUDA2: {geomean_cuda2:.2f}, GM Triton1: {geomean_triton1:.2f}", fontsize=22)
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, fontsize=18)
     ax1.tick_params(axis='y', labelsize=16)
@@ -82,13 +88,14 @@ def plot_grouped_bars_with_speedup(data, title, output_file, throughput : bool =
     ax2.plot(x, speedup_cuda1, label='Speedup CUDA1', color='red', marker='o', linestyle='--')
     ax2.plot(x, speedup_cuda2, label='Speedup CUDA2', color='green', marker='o', linestyle='--')
     ax2.plot(x, speedup_cuda3, label='Speedup CUDA3', color='purple', marker='o', linestyle='--')
-    ax2.plot(x, triton_speedup, label='Speedup Triton', color='black', marker='o', linestyle='--')
+    ax2.plot(x, triton_speedup1, label='Speedup Triton1', color='black', marker='o', linestyle='--')
+    ax2.plot(x, triton_speedup2, label='Speedup Triton2', color='yellow', marker='o', linestyle='--')
     ax2.set_ylabel('Speedup over Baseline', fontsize=18)
     ax2.legend(loc='lower right', fontsize=14)
     
     # limit secondary y-axis to 0.9 to 1.3
-    ax2.set_ylim(0.3, 1.3)
-    ax2.set_yticks(np.arange(0.3, 1.4, 0.1))
+    ax2.set_ylim(0.5, 5.5)
+    ax2.set_yticks(np.arange(0.5, 5.6, 0.5))
     
     # set y ticks fontsize to 18
     ax2.tick_params(axis='y', labelsize=16)
